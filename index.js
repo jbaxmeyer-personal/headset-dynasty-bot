@@ -13,6 +13,7 @@ const client = new Client({
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.GuildMessageReactions
     ],
+    partials: ['MESSAGE', 'CHANNEL', 'REACTION'],
 });
 
 const commands = [
@@ -165,7 +166,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
     if (reaction.message.id !== rulesMessageId) return;
 
     // Check if the reaction is the ✅ emoji
-    if (reaction.emoji.name === 'white_check_mark') {
+    if (reaction.emoji.name === '✅') {
         // Trigger job offers logic for this user
         sendJobOffers(user);
     }
