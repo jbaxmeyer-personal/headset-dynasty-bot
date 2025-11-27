@@ -134,70 +134,12 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (commandName === 'listteams') {
-        const guild = interaction.guild;
-
-        // Acknowledge fast so Discord doesn't time out
         await interaction.deferReply({ ephemeral: true });
 
-        // Find the "member-list" channel
-        const channel = guild.channels.cache.find(
-            c => c.name === "member-list" && c.type === ChannelType.GuildText
-        );
-
-        if (!channel) {
-            await interaction.editReply("Channel **member-list** not found!");
-            return;
-        }
-
-        // Delete previous bot messages
-        const messages = await channel.messages.fetch({ limit: 20 });
-        const botMessages = messages.filter(m => m.author.id === client.user.id);
-
-        for (const msg of botMessages.values()) {
-            await msg.delete().catch(() => {});
-        }
-
-        // Build taken list safely
-        const takenTeams = [];
-        for (const t of teams.filter(t => t.takenBy)) {
-            let coach;
-            try {
-                coach = await guild.members.fetch(t.takenBy);
-            } catch (err) {
-                coach = null;
-            }
-            takenTeams.push(
-                `🏈 **${t.name}** — ${coach ? coach.user.username : "Unknown Coach"}`
-            );
-        }
-        const taken = takenTeams.length ? takenTeams.join('\n') : "None";
-
-        // Build available list
-        const available = teams
-            .filter(t => !t.takenBy)
-            .map(t => `🟢 ${t.name}`)
-            .join('\n') || "None";
-
-        // Build embed
-        const embed = {
-            title: "🏈 Headset Dynasty – Team Availability",
-            color: 0x2b2d31,
-            fields: [
-                { name: "Taken Teams", value: taken },
-                { name: "Available Teams", value: available }
-            ],
-            timestamp: new Date()
-        };
-
-        // Send new embed
-        const newMsg = await channel.send({ embeds: [embed] });
-
-        // Pin
-        await newMsg.pin().catch(() => {});
+        await sendTeamList(client);
 
         await interaction.editReply("Team list updated in **#member-list**.");
     }
-
 
 });
 
@@ -212,6 +154,61 @@ async function announceInGeneral(client, message) {
 
     await channel.send(message);
 }
+
+async function sendTeamList(client) {
+    const guild = client.guilds.cache.first();
+    if (!guild) return;
+
+    const channel = guild.channels.cache.find(
+        c => c.name === "member-list" && c.type === 0 // GuildText
+    );
+    if (!channel) return;
+
+    // Delete prior bot messages
+    const messages = await channel.messages.fetch({ limit: 20 });
+    const botMessages = messages.filter(m => m.author.id === client.user.id);
+
+    for (const msg of botMessages.values()) {
+        await msg.delete().catch(() => {});
+    }
+
+    // Build taken teams list
+    const takenTeams = [];
+    for (const t of teams.filter(t => t.takenBy)) {
+        let coach;
+        try {
+            coach = await guild.members.fetch(t.takenBy);
+        } catch {
+            coach = null;
+        }
+        takenTeams.push(
+            `🏈 **${t.name}** — ${coach ? coach.user.username : "Unknown Coach"}`
+        );
+    }
+    const taken = takenTeams.length ? takenTeams.join('\n') : "None";
+
+    // Build available list
+    const available = teams
+        .filter(t => !t.takenBy)
+        .map(t => `🟢 ${t.name}`)
+        .join('\n') || "None";
+
+    // Build embed
+    const embed = {
+        title: "🏈 Headset Dynasty – Team Availability",
+        color: 0x2b2d31,
+        fields: [
+            { name: "Taken Teams", value: taken },
+            { name: "Available Teams", value: available }
+        ],
+        timestamp: new Date()
+    };
+
+    // Post new embed and pin it
+    const newMsg = await channel.send({ embeds: [embed] });
+    await newMsg.pin().catch(() => {});
+}
+
 
 client.on('messageCreate', async message => {
     // Only process DMs, ignore bot messages
