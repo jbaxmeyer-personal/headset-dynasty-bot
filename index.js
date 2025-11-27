@@ -130,6 +130,7 @@ client.on('interactionCreate', async interaction => {
         if (channel) await channel.delete().catch(() => {});
 
         await interaction.reply({ content: `Team ${team.name} has been reset and freed up.`, ephemeral: true });
+        await sendTeamList(interaction.client);
     }
 
     if (commandName === 'listteams') {
@@ -199,6 +200,18 @@ client.on('interactionCreate', async interaction => {
 
 
 });
+
+async function announceInGeneral(client, message) {
+    const guild = client.guilds.cache.first();
+    if (!guild) return;
+
+    const channel = guild.channels.cache.find(
+        c => c.name === "general" && c.isTextBased()
+    );
+    if (!channel) return;
+
+    await channel.send(message);
+}
 
 client.on('messageCreate', async message => {
     // Only process DMs, ignore bot messages
@@ -273,6 +286,8 @@ client.on('messageCreate', async message => {
 
     await message.reply(`Congratulations! You have accepted the team: ${team.name}. Your private channel and role have been created.`);
     delete client.userOffers[userId];
+    await announceInGeneral(interaction.client, `🏈 **${interaction.user.username}** has claimed **${team}**!`);
+    await sendTeamList(interaction.client);
 });
 
 
