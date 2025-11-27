@@ -281,11 +281,22 @@ client.on('messageCreate', async message => {
     });
 
 
-    await message.reply(`Congratulations! You have accepted the team: ${team.name}. Your private channel and role have been created.`);
+    await message.reply(
+        `Congratulations! You have accepted the team: **${team.name}**. Your private channel and role have been created.`
+    );
+
     delete client.userOffers[userId];
-    await announceInGeneral(interaction.client, `🏈 **${interaction.user.username}** has claimed **${team}**!`);
-    await sendTeamList(interaction.client);
+
+    // Announce in #general
+    await announceInGeneral(
+        client,
+        `🏈 **${message.author.username}** has claimed **${team.name}**!`
+    );
+
+    // Refresh team list
+    await sendTeamList(client);
 });
+
 
 
 client.login(process.env.DISCORD_TOKEN);
