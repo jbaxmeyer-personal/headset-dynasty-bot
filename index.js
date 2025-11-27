@@ -153,40 +153,52 @@ client.on('interactionCreate', async interaction => {
             await msg.delete().catch(() => {});
         }
 
-        // Build lists
-        const taken = teams
-            .filter(t => t.takenBy)
-            .map(t => {
-                const coach = guild.members.cache.get(t.takenBy);
-                return `🏈 **${t.name}** — ${coach ? coach.user.username : "Unknown Coach"}`;
-            })
-            .join('\n') || "None";
+        // Build taken list (safe member fetch)
+        const takenTeams = [];
+        for (const t of teams.filter(t => t.takenBy)) {
+            let coach;
+            try {
+                coach = await guild.members.fetch(t.takenBy);
+            } catch (err) {
+                coach = null;
+            }
+            takenTeams.push(
+                `🏈 **${t.name}** — ${coach ? coach.user.username : "Unknown Coach"}`
+            );
+        }
+        const taken = takenTeams.length ? takenTeams.join('\n') : "None";
 
+        // Build available list
         const available = teams
             .filter(t => !t.takenBy)
             .map(t => `🟢 ${t.name}`)
             .join('\n') || "None";
 
+        // Build embed
         const embed = {
-            color: 0x0099ff,
-            title: "Headset Dynasty — Team Status",
+            title: "🏈 Headset Dynasty – Team Availability",
+            color: 0x2b2d31,
             fields: [
-                { name: "🏆 Taken Teams", value: taken },
-                { name: "📬 Available Teams", value: available }
+                {
+                    name: "Taken Teams",
+                    value: taken
+                },
+                {
+                    name: "Available Teams",
+                    value: available
+                }
             ],
             timestamp: new Date()
         };
 
-        // Send new message
+        // Send new embed
         const newMsg = await channel.send({ embeds: [embed] });
 
-        // Pin the new message
+        // Pin it
         await newMsg.pin().catch(() => {});
 
         await interaction.reply({ content: "Team list updated in **#member-list**.", ephemeral: true });
     }
-
-
 
 });
 
