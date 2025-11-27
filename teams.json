@@ -1,12 +1,42 @@
 [
-  { "name": "Alabama", "takenBy": null },
-  { "name": "Georgia", "takenBy": null },
-  { "name": "LSU", "takenBy": null },
-  { "name": "Ohio State", "takenBy": null },
-  { "name": "Oregon", "takenBy": null },
-  { "name": "Texas", "takenBy": null },
-  { "name": "Oklahoma", "takenBy": null },
-  { "name": "Penn State", "takenBy": null },
-  { "name": "Michigan", "takenBy": null },
-  { "name": "Florida", "takenBy": null }
+  {
+    "name": "Alabama",
+    "takenBy": null
+  },
+  {
+    "name": "Georgia",
+    "takenBy": null
+  },
+  {
+    "name": "LSU",
+    "takenBy": null
+  },
+  {
+    "name": "Ohio State",
+    "takenBy": null
+  },
+  {
+    "name": "Oregon",
+    "takenBy": null
+  },
+  {
+    "name": "Texas",
+    "takenBy": null
+  },
+  {
+    "name": "Oklahoma",
+    "takenBy": null
+  },
+  {
+    "name": "Penn State",
+    "takenBy": null
+  },
+  {
+    "name": "Michigan",
+    "takenBy": null
+  },
+  {
+    "name": "Florida",
+    "takenBy": null
+  }
 ]
