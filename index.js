@@ -13,7 +13,7 @@ const client = new Client({
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.GuildMessageReactions
     ],
-    partials: ['MESSAGE', 'CHANNEL', 'REACTION'],
+    partials: ['MESSAGE', 'CHANNEL', 'REACTION', 'USER', 'GUILD_MEMBER'],
 });
 
 const commands = [
@@ -146,31 +146,36 @@ client.on('interactionCreate', async interaction => {
 });
 
 client.on('messageReactionAdd', async (reaction, user) => {
-    // Ignore bot reactions
     if (user.bot) return;
 
-    // Make sure we have the full message cached
+    // Handle partial reaction/message
     if (reaction.partial) {
         try {
             await reaction.fetch();
-        } catch (error) {
-            console.error('Error fetching reaction:', error);
+        } catch (err) {
+            console.error('Failed to fetch reaction:', err);
             return;
         }
     }
 
-    // Only trigger for the rules message
-    // You can use message ID or check channel + some identifier
+    if (reaction.message.partial) {
+        try {
+            await reaction.message.fetch();
+        } catch (err) {
+            console.error('Failed to fetch message:', err);
+            return;
+        }
+    }
+
     const rulesMessageId = '1437492224215486537';
 
     if (reaction.message.id !== rulesMessageId) return;
+    if (reaction.emoji.name !== '✅') return;
 
-    // Check if the reaction is the ✅ emoji
-    if (reaction.emoji.name === '✅') {
-        // Trigger job offers logic for this user
-        sendJobOffers(user);
-    }
+    console.log(`✅ detected on rules by ${user.username}`);
+    sendJobOffers(user);
 });
+
 
 async function sendJobOffers(user) {
     const availableTeams = teams.filter(t => !t.takenBy);
