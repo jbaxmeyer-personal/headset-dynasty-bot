@@ -380,11 +380,11 @@ async function sendTeamList(client) {
                     coach = null;
                 }
 
-                const coachName = coach ? coach.displayName : "Unknown Coach";
+                const coachName = coach ? `<@${coach.id}>` : "Unknown Coach";
 
-                description += `🏈 **${team.name}** (${team.stars}⭐) — Taken by **${coachName}**\n`;
+                description += `🏈 **${team.name}** — Taken by **${coachName}**\n`;
             } else {
-                description += `🟢 **${team.name}** (${team.stars}⭐) — Available\n`;
+                description += `🟢 **${team.name}** — Available\n`;
             }
         }
 
