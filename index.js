@@ -82,8 +82,8 @@ const commands = [
         )
         .addStringOption(option =>
             option.setName('summary')
-            .setDescription('Optional game summary')
-            .setRequired(false)
+            .setDescription('Game summary')
+            .setRequired(true)
         )
 
 ].map(cmd => cmd.toJSON());
@@ -130,10 +130,8 @@ client.on('interactionCreate', async interaction => {
 
             for (const conf of data.conferences) {
                 for (const t of conf.teams) {
-                    if (t.takenBy && t.takenBy !== interaction.user.id) { // only include taken teams as opponents
-                        if (t.name.toLowerCase().includes(value)) {
-                            choices.push(t.name);
-                        }
+                    if (t.name.toLowerCase().includes(value)) {
+                        choices.push(t.name);
                     }
                 }
             }
@@ -238,7 +236,7 @@ client.on('interactionCreate', async interaction => {
         const opponentName = interaction.options.getString('opponent');
         const yourScore = interaction.options.getInteger('your_score');
         const opponentScore = interaction.options.getInteger('opponent_score');
-        const summary = interaction.options.getString('summary') || '';
+        const summary = interaction.options.getString('summary');
 
         // 1. Find user's team
         let userTeam;
