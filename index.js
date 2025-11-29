@@ -23,7 +23,7 @@ const {
     Partials
 } = require('discord.js');
 
-import { createClient } from "@supabase/supabase-js";
+const { createClient } = require("@supabase/supabase-js");
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
