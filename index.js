@@ -122,27 +122,32 @@ client.once('ready', () => {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
 
-    if (!interaction.isAutocomplete()) return;
+    if (interaction.isAutocomplete()) {
+        const focusedOption = interaction.options.getFocused(true);
+        if (focusedOption.name === 'opponent') {
+            const value = focusedOption.value.toLowerCase();
 
-    const focusedOption = interaction.options.getFocused(true);
-    if (focusedOption.name === 'opponent') {
-        const value = focusedOption.value.toLowerCase();
+            const data = JSON.parse(fs.readFileSync('./teams.json'));
+            let choices = [];
 
-        let choices = [];
-        const data = JSON.parse(fs.readFileSync('./teams.json'));
-        for (const conf of data.conferences) {
-            for (const t of conf.teams) {
-                if (!t.takenBy || t.takenBy !== interaction.user.id) continue; // optional: only opponents
-                if (t.name.toLowerCase().includes(value)) {
-                    choices.push(t.name);
+            for (const conf of data.conferences) {
+                for (const t of conf.teams) {
+                    if (t.takenBy && t.takenBy !== interaction.user.id) { // only include taken teams as opponents
+                        if (t.name.toLowerCase().includes(value)) {
+                            choices.push(t.name);
+                        }
+                    }
                 }
             }
-        }
 
-        await interaction.respond(
-            choices.slice(0, 25).map(name => ({ name, value: name }))
-        );
+            // limit to 25 options
+            await interaction.respond(
+                choices.slice(0, 25).map(name => ({ name, value: name }))
+            );
+        }
+        return; // don't continue to command handler
     }
+
 
     const { commandName } = interaction;
 
