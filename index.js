@@ -46,6 +46,7 @@ const commands = [
     new SlashCommandBuilder()
         .setName('joboffers')
         .setDescription('Get your Headset Dynasty job offers'),
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder()
         .setName('resetteam')
         .setDescription('Reset a user’s team and free it back up')
