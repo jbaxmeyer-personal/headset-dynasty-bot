@@ -59,7 +59,33 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName('listteams')
-        .setDescription('Post a list of taken and available teams to the member-list channel')
+        .setDescription('Post a list of taken and available teams to the member-list channel'),
+
+    new SlashCommandBuilder()
+        .setName('game-result')
+        .setDescription('Submit a game result for your team')
+        .addStringOption(option =>
+            option.setName('opponent')
+            .setDescription('Opponent team')
+            .setRequired(true)
+            .setAutocomplete(true)
+        )
+        .addIntegerOption(option =>
+            option.setName('your_score')
+            .setDescription('Your team score')
+            .setRequired(true)
+        )
+        .addIntegerOption(option =>
+            option.setName('opponent_score')
+            .setDescription('Opponent score')
+            .setRequired(true)
+        )
+        .addStringOption(option =>
+            option.setName('summary')
+            .setDescription('Optional game summary')
+            .setRequired(false)
+        )
+
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -74,6 +100,28 @@ client.once('ready', () => {
 
 client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
+
+    if (!interaction.isAutocomplete()) return;
+
+    const focusedOption = interaction.options.getFocused(true);
+    if (focusedOption.name === 'opponent') {
+        const value = focusedOption.value.toLowerCase();
+
+        let choices = [];
+        const data = JSON.parse(fs.readFileSync('./teams.json'));
+        for (const conf of data.conferences) {
+            for (const t of conf.teams) {
+                if (!t.takenBy || t.takenBy !== interaction.user.id) continue; // optional: only opponents
+                if (t.name.toLowerCase().includes(value)) {
+                    choices.push(t.name);
+                }
+            }
+        }
+
+        await interaction.respond(
+            choices.slice(0, 25).map(name => ({ name, value: name }))
+        );
+    }
 
     const { commandName } = interaction;
 
@@ -159,6 +207,95 @@ client.on('interactionCreate', async interaction => {
         await sendTeamList(client);
 
         await interaction.editReply("Team list updated in **#member-list**.");
+    }
+
+    if (commandName === 'game-result') {
+        const opponentName = interaction.options.getString('opponent');
+        const yourScore = interaction.options.getInteger('your_score');
+        const opponentScore = interaction.options.getInteger('opponent_score');
+        const summary = interaction.options.getString('summary') || '';
+
+        // 1. Find user's team
+        let userTeam;
+        for (const conf of teams.conferences) {
+            userTeam = conf.teams.find(t => t.takenBy === interaction.user.id);
+            if (userTeam) break;
+        }
+
+        if (!userTeam) {
+            return interaction.reply({ content: "You don't control a team!", ephemeral: true });
+        }
+
+        // 2. Find opponent team
+        let opponentTeam;
+        for (const conf of teams.conferences) {
+            opponentTeam = conf.teams.find(t => t.name.toLowerCase() === opponentName.toLowerCase());
+            if (opponentTeam) break;
+        }
+
+        if (!opponentTeam) {
+            return interaction.reply({ content: `Opponent team "${opponentName}" not found.`, ephemeral: true });
+        }
+
+        // 3. Determine win/loss
+        let result;
+        if (yourScore > opponentScore) result = 'win';
+        else if (yourScore < opponentScore) result = 'loss';
+        else result = 'tie';
+
+        // 4. Load or initialize results.json
+        let results = {};
+        try {
+            results = JSON.parse(fs.readFileSync('./results.json'));
+        } catch (err) {
+            results = {};
+        }
+
+        // 5. Initialize user record if not exists
+        if (!results[interaction.user.id]) {
+            results[interaction.user.id] = { wins: 0, losses: 0, ties: 0, games: [] };
+        }
+
+        // 6. Update record
+        if (result === 'win') results[interaction.user.id].wins++;
+        else if (result === 'loss') results[interaction.user.id].losses++;
+        else results[interaction.user.id].ties++;
+
+        // 7. Save game
+        results[interaction.user.id].games.push({
+            date: new Date().toISOString(),
+            opponent: opponentTeam.name,
+            yourScore,
+            opponentScore,
+            result,
+            summary
+        });
+
+        fs.writeFileSync('./results.json', JSON.stringify(results, null, 2));
+
+        // 8. Post box score to news-feed
+        const guild = interaction.guild;
+        const newsChannel = guild.channels.cache.find(c => c.name === 'news-feed' && c.isTextBased());
+        if (newsChannel) {
+            const embed = {
+                title: `🏈 Game Result: ${userTeam.name} vs ${opponentTeam.name}`,
+                color: result === 'win' ? 0x00ff00 : result === 'loss' ? 0xff0000 : 0xffff00,
+                fields: [
+                    { name: `${userTeam.name}`, value: `${yourScore}`, inline: true },
+                    { name: `${opponentTeam.name}`, value: `${opponentScore}`, inline: true },
+                    { name: 'Result', value: result.toUpperCase(), inline: false },
+                ],
+                description: summary,
+                timestamp: new Date(),
+            };
+            await newsChannel.send({ embeds: [embed] });
+        }
+
+        // 9. Confirm to user
+        await interaction.reply({
+            content: `Game recorded! ${userTeam.name} ${yourScore} - ${opponentScore} ${opponentTeam.name} (${result.toUpperCase()})`,
+            ephemeral: true
+        });
     }
 
 });
