@@ -190,6 +190,9 @@ async function runListTeamsDisplay() {
       const low = tList.filter(t => t.stars !== null && parseFloat(t.stars) <= 2.0);
       if (low.length === 0) continue;
 
+      // Sort teams alphabetically within the conference
+      low.sort((a, b) => a.name.localeCompare(b.name));
+
       text += `\n__**${conf}**__\n`;
       for (const t of low) {
         if (t.taken_by) {
@@ -638,14 +641,14 @@ client.on('messageCreate', async msg => {
       return msg.reply(`Failed to claim ${team.name}: ${updateResp.error.message}`);
     }
 
-    msg.reply(`You claimed **${team.name}**!`);
+    msg.reply(`You accepted the job offer from **${team.name}**!`);
     delete client.userOffers[userId];
 
     // announce in general channel and perform setup
     const guild = client.guilds.cache.first();
     if (guild) {
       const general = guild.channels.cache.find(c => c.name === 'general' && c.isTextBased());
-      if (general) general.send(`🏈 <@${userId}> has claimed **${team.name}**!`).catch(() => {});
+      if (general) general.send(`🏈 <@${userId}> has accepted a job offer from **${team.name}**!`).catch(() => {});
 
       // Create team-specific channel (named after school name)
       try {
