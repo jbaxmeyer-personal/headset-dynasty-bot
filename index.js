@@ -52,7 +52,7 @@ const client = new Client({
 const jobOfferUsed = new Set();
 
 // ---------------------------------------------------------
-// REGISTER GUILD COMMANDS
+// REGISTER GUILD COMMANDS (testing)
 // ---------------------------------------------------------
 
 const commands = [
@@ -86,54 +86,58 @@ const commands = [
         .setAutocomplete(true)
     )
     .addIntegerOption(option =>
-      option.setName('your_score')
+      option
+        .setName('your_score')
         .setDescription('Your team score')
         .setRequired(true)
     )
     .addIntegerOption(option =>
-      option.setName('opponent_score')
+      option
+        .setName('opponent_score')
         .setDescription('Opponent score')
         .setRequired(true)
     )
     .addStringOption(option =>
-      option.setName('summary')
+      option
+        .setName('summary')
         .setDescription('Game summary')
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('press-release')
-    .setDescription('Post a press release')
-    .addStringOption(option =>
-      option.setName('text')
-        .setDescription('Press release text')
-        .setRequired(true)
-    ),
+    .setDescription('Post a press release'),
 
   new SlashCommandBuilder()
     .setName('advance')
-    .setDescription('Advance the week (commissioner only)'),
+    .setDescription('Advance to next week (commissioner only)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   new SlashCommandBuilder()
     .setName('season-advance')
-    .setDescription('Advance the season (commissioner only)')
+    .setDescription('Advance to next season (commissioner only)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
   try {
-    console.log("Registering slash commands...");
+    console.log("Clearing existing guild commands...");
     await rest.put(
-      Routes.applicationGuildCommands(
-        process.env.CLIENT_ID,
-        process.env.GUILD_ID
-      ),
+      Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+      { body: [] } // Clear all existing commands
+    );
+
+    console.log("Registering updated slash commands...");
+    await rest.put(
+      Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
       { body: commands }
     );
-    console.log("Commands registered.");
+
+    console.log("Commands cleared and registered successfully.");
   } catch (err) {
-    console.error(err);
+    console.error("Error registering commands:", err);
   }
 })();
 
