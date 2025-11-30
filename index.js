@@ -21,6 +21,7 @@ const {
   SlashCommandBuilder,
   Routes,
   REST,
+  ChannelType,
   PermissionFlagsBits,
   Partials
 } = require('discord.js');
@@ -32,8 +33,6 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
-
-const jobOfferUsed = new Set();
 
 const client = new Client({
   intents: [
@@ -49,6 +48,8 @@ const client = new Client({
     Partials.Reaction
   ]
 });
+
+const jobOfferUsed = new Set();
 
 // ---------------------------------------------------------
 // REGISTER GUILD COMMANDS
@@ -85,23 +86,37 @@ const commands = [
         .setAutocomplete(true)
     )
     .addIntegerOption(option =>
-      option
-        .setName('your_score')
+      option.setName('your_score')
         .setDescription('Your team score')
         .setRequired(true)
     )
     .addIntegerOption(option =>
-      option
-        .setName('opponent_score')
+      option.setName('opponent_score')
         .setDescription('Opponent score')
         .setRequired(true)
     )
     .addStringOption(option =>
-      option
-        .setName('summary')
+      option.setName('summary')
         .setDescription('Game summary')
         .setRequired(true)
-    )
+    ),
+
+  new SlashCommandBuilder()
+    .setName('press-release')
+    .setDescription('Post a press release')
+    .addStringOption(option =>
+      option.setName('text')
+        .setDescription('Press release text')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('advance')
+    .setDescription('Advance the week (commissioner only)'),
+
+  new SlashCommandBuilder()
+    .setName('season-advance')
+    .setDescription('Advance the season (commissioner only)')
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -131,41 +146,48 @@ client.once('ready', () => {
 });
 
 // ---------------------------------------------------------
-// SLASH COMMANDS
+// AUTOCOMPLETE
 // ---------------------------------------------------------
 
 client.on('interactionCreate', async interaction => {
-  // -----------------------
+  if (interaction.isAutocomplete()) {
+    const focused = interaction.options.getFocused(true);
+    if (focused.name === "opponent") {
+      const search = focused.value.toLowerCase();
+      const { data: teamsData, error } = await supabase.from('teams').select('*');
+      if (error) console.error(error);
+
+      const list = teamsData.filter(t => t.name.toLowerCase().includes(search));
+      return interaction.respond(
+        list.slice(0, 25).map(x => ({ name: x.name, value: x.name }))
+      );
+    }
+  }
+
+  if (!interaction.isCommand()) return;
+  const name = interaction.commandName;
+
+  // ---------------------------------------------------------
   // /joboffers
-  // -----------------------
-  if (interaction.isCommand() && interaction.commandName === 'joboffers') {
+  // ---------------------------------------------------------
+  if (name === "joboffers") {
     if (jobOfferUsed.has(interaction.user.id)) {
-      return interaction.reply({
-        ephemeral: true,
-        content: "⛔ You already received a job offer."
-      });
+      return interaction.reply({ ephemeral: true, content: "⛔ You already received a job offer." });
     }
 
     jobOfferUsed.add(interaction.user.id);
 
-    // Fetch all teams from Supabase
-    const { data: allTeams, error } = await supabase
-      .from("teams")
-      .select("*");
+    const { data: available, error } = await supabase
+      .from('teams')
+      .select('*')
+      .lte('stars', 2.0)
+      .is('takenBy', null);
 
-    if (error) {
-      console.error(error);
-      return interaction.reply({ ephemeral: true, content: "Error fetching teams." });
-    }
+    if (error) return interaction.reply({ ephemeral: true, content: `Error: ${error.message}` });
+    if (!available || available.length === 0) return interaction.reply({ ephemeral: true, content: "No teams available." });
 
-    // Filter: stars <= 2.0, not taken
-    const available = allTeams.filter(t => parseFloat(t.stars) <= 2.0 && !t.takenBy);
-
-    if (!available.length) return interaction.reply({ ephemeral: true, content: "No teams available." });
-
-    // Randomly pick up to 5 offers
-    let options = [...available];
-    let offers = [];
+    const options = [...available];
+    const offers = [];
     for (let i = 0; i < 5 && options.length > 0; i++) {
       const idx = Math.floor(Math.random() * options.length);
       offers.push(options[idx]);
@@ -175,105 +197,174 @@ client.on('interactionCreate', async interaction => {
     if (!client.userOffers) client.userOffers = {};
     client.userOffers[interaction.user.id] = offers;
 
-    // Group by conference
-    const grouped = {};
-    offers.forEach(t => {
-      if (!grouped[t.conference]) grouped[t.conference] = [];
-      grouped[t.conference].push(t);
-    });
-
-    let dmText = '';
-    for (const conf in grouped) {
-      dmText += `__**${conf}**__\n`;
-      grouped[conf].forEach((t, i) => {
-        dmText += `${i + 1}️⃣ ${t.name} (${t.stars}★)\n`;
-      });
-      dmText += '\n';
-    }
-
     try {
-      await interaction.user.send(`Your job offers:\n\n${dmText}Reply with the number to accept.`);
+      await interaction.user.send(
+        `Your job offers:\n\n` +
+        offers.map((t, i) => `${i + 1}️⃣ ${t.name}`).join("\n\n") +
+        "\n\nReply with the number to accept."
+      );
       return interaction.reply({ ephemeral: true, content: "Check your DMs!" });
     } catch (err) {
       return interaction.reply({ ephemeral: true, content: "I cannot DM you. Enable DMs." });
     }
   }
 
-  // -----------------------
+  // ---------------------------------------------------------
   // /resetteam
-  // -----------------------
-  if (interaction.isCommand() && interaction.commandName === 'resetteam') {
-    const coach = interaction.options.getUser('coach');
+  // ---------------------------------------------------------
+  if (name === "resetteam") {
+    const coach = interaction.options.getUser("coach");
+    const { data: teamData, error } = await supabase
+      .from('teams')
+      .select('*')
+      .eq('takenBy', coach.id)
+      .limit(1)
+      .single();
 
-    const { data: userTeams, error } = await supabase
-      .from("teams")
-      .select("*")
-      .eq("takenBy", coach.id)
-      .limit(1);
+    if (error || !teamData) return interaction.reply({ ephemeral: true, content: `${coach.username} has no team.` });
 
-    if (error) {
-      console.error(error);
-      return interaction.reply({ ephemeral: true, content: "Error fetching team." });
-    }
-
-    if (!userTeams || !userTeams.length) {
-      return interaction.reply({ ephemeral: true, content: `${coach.username} has no team.` });
-    }
-
-    const team = userTeams[0];
-
-    await supabase.from("teams").update({ takenBy: null }).eq("id", team.id);
+    await supabase.from('teams').update({ takenBy: null }).eq('id', teamData.id);
     jobOfferUsed.delete(coach.id);
 
-    return interaction.reply({ ephemeral: true, content: `Reset team ${team.name}.` });
+    return interaction.reply({ ephemeral: true, content: `Reset team ${teamData.name}.` });
   }
 
-  // -----------------------
-  // /listteams (Step 4)
-  // -----------------------
-  if (interaction.isCommand() && interaction.commandName === 'listteams') {
+  // ---------------------------------------------------------
+  // /listteams
+  // ---------------------------------------------------------
+  if (name === "listteams") {
     await interaction.deferReply({ ephemeral: true });
+    const { data: teamsData, error } = await supabase.from('teams').select('*');
+    if (error) return interaction.editReply(`Error: ${error.message}`);
 
-    // Fetch teams grouped by conference
-    const { data: allTeams, error } = await supabase.from("teams").select("*");
-    if (error) return interaction.editReply("Error fetching teams.");
-
-    const grouped = {};
-    allTeams.filter(t => parseFloat(t.stars) <= 2.0).forEach(t => {
-      if (!grouped[t.conference]) grouped[t.conference] = [];
-      grouped[t.conference].push(t);
+    // Group by conference
+    const confMap = {};
+    teamsData.forEach(t => {
+      if (!confMap[t.conference]) confMap[t.conference] = [];
+      confMap[t.conference].push(t);
     });
 
-    let text = '';
-    for (const conf in grouped) {
-      text += `\n__**${conf}**__\n`;
-      grouped[conf].forEach(t => {
-        text += t.takenBy ? `❌ **${t.name}** — <@${t.takenBy}>\n` : `🟢 **${t.name}** — Available\n`;
-      });
-    }
-
     const guild = client.guilds.cache.first();
-    if (!guild) return interaction.editReply("No guild found.");
+    if (!guild) return;
 
     const channel = guild.channels.cache.find(c => c.name === "member-list");
-    if (!channel) return interaction.editReply("No 'member-list' channel found.");
+    if (!channel) return;
 
-    const embed = {
-      title: "2★ and Below Teams",
-      description: text,
-      color: 0x2b2d31,
-      timestamp: new Date()
-    };
+    let text = "";
+    for (const [conf, tList] of Object.entries(confMap)) {
+      text += `\n__**${conf}**__\n`;
+      const low = tList.filter(t => t.stars <= 2.0);
+      for (const t of low) {
+        text += t.takenBy ? `❌ **${t.name}** — <@${t.takenBy}>\n` : `🟢 **${t.name}** — Available\n`;
+      }
+    }
 
+    const embed = { title: "2★ and Below Teams", description: text, color: 0x2b2d31, timestamp: new Date() };
     await channel.send({ embeds: [embed] });
     return interaction.editReply("Team list updated.");
+  }
+
+  // ---------------------------------------------------------
+  // /game-result
+  // ---------------------------------------------------------
+  if (name === "game-result") {
+    const opponentName = interaction.options.getString("opponent");
+    const userScore = interaction.options.getInteger("your_score");
+    const opponentScore = interaction.options.getInteger("opponent_score");
+    const summary = interaction.options.getString("summary");
+
+    const seasonResp = await supabase.from('meta').select('value').eq('key','current_season').single();
+    const currentSeason = seasonResp.data?.value || 1;
+
+    const { data: userTeam } = await supabase.from('teams').select('*').eq('takenBy', interaction.user.id).single();
+    const { data: opponentTeam } = await supabase.from('teams').select('*').eq('name', opponentName).single();
+
+    if (!userTeam || !opponentTeam) return interaction.reply({ ephemeral: true, content: "Teams not found." });
+
+    const resultText = userScore > opponentScore ? "win" : "loss";
+
+    await supabase.from('results').insert([{
+      season: currentSeason,
+      user_team_id: userTeam.id,
+      user_team_name: userTeam.name,
+      opponent_team_id: opponentTeam.id,
+      opponent_team_name: opponentTeam.name,
+      user_score: userScore,
+      opponent_score: opponentScore,
+      result: resultText,
+      summary
+    }]);
+
+    return interaction.reply({ ephemeral: true, content: `Result recorded: **${userTeam.name}** ${resultText} vs ${opponentTeam.name}` });
+  }
+
+  // ---------------------------------------------------------
+  // /press-release
+  // ---------------------------------------------------------
+  if (name === "press-release") {
+    const text = interaction.options.getString("text");
+    const seasonResp = await supabase.from('meta').select('value').eq('key','current_season').single();
+    const weekResp = await supabase.from('meta').select('value').eq('key','current_week').single();
+    const season = seasonResp.data?.value || 1;
+    const week = weekResp.data?.value || 1;
+
+    await supabase.from('news_feed').insert([{ season, week, text }]);
+    return interaction.reply({ ephemeral: true, content: "Press release posted." });
+  }
+
+  // ---------------------------------------------------------
+  // /advance
+  // ---------------------------------------------------------
+  if (name === "advance") {
+    if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
+      return interaction.reply({ ephemeral: true, content: "Only the commissioner can advance the week." });
+    }
+
+    const weekResp = await supabase.from('meta').select('value').eq('key','current_week').single();
+    const currentWeek = weekResp.data?.value || 1;
+
+    // Post advance message
+    const guild = client.guilds.cache.first();
+    const advanceChannel = guild.channels.cache.find(c => c.name === 'advance');
+    if (advanceChannel) await advanceChannel.send("We have advanced to the next week");
+
+    // Weekly Summary
+    const newsResp = await supabase.from('news_feed').select('*').eq('week', currentWeek);
+    const summaryText = newsResp.data.map(n => n.text).join("\n") || "No news this week.";
+
+    const newsFeedChannel = guild.channels.cache.find(c => c.name === 'news-feed');
+    if (newsFeedChannel) await newsFeedChannel.send(`**Weekly Summary (Week ${currentWeek})**\n\n${summaryText}`);
+
+    // Increment week
+    await supabase.from('meta').update({ value: currentWeek + 1 }).eq('key','current_week');
+
+    return interaction.reply({ ephemeral: true, content: `Week ${currentWeek} advanced.` });
+  }
+
+  // ---------------------------------------------------------
+  // /season-advance
+  // ---------------------------------------------------------
+  if (name === "season-advance") {
+    if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
+      return interaction.reply({ ephemeral: true, content: "Only the commissioner can advance the season." });
+    }
+
+    const seasonResp = await supabase.from('meta').select('value').eq('key','current_season').single();
+    const currentSeason = seasonResp.data?.value || 1;
+
+    const weekResp = await supabase.from('meta').select('value').eq('key','current_week').single();
+    const currentWeek = weekResp.data?.value || 1;
+
+    await supabase.from('meta').update({ value: currentSeason + 1 }).eq('key','current_season');
+    await supabase.from('meta').update({ value: 1 }).eq('key','current_week'); // Reset week to 1
+
+    return interaction.reply({ ephemeral: true, content: `Season advanced to ${currentSeason + 1}, week reset to 1.` });
   }
 });
 
 // ---------------------------------------------------------
 // DM ACCEPT OFFER
 // ---------------------------------------------------------
-
 client.on("messageCreate", async msg => {
   if (msg.guild || msg.author.bot) return;
 
@@ -289,39 +380,10 @@ client.on("messageCreate", async msg => {
 
   const team = offers[choice - 1];
 
-  // Claim team in Supabase
-  const { error } = await supabase.from("teams").update({ takenBy: userId }).eq("id", team.id);
-
-  if (error) {
-    console.error(error);
-    return msg.reply("Error claiming team. Try again.");
-  }
+  await supabase.from('teams').update({ takenBy: userId }).eq('id', team.id);
 
   msg.reply(`You claimed **${team.name}**!`);
   delete client.userOffers[userId];
-});
-
-// ---------------------------------------------------------
-// AUTO-COMPLETE
-// ---------------------------------------------------------
-
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isAutocomplete()) return;
-  const focused = interaction.options.getFocused(true);
-
-  if (focused.name === "opponent") {
-    const search = focused.value.toLowerCase();
-
-    const { data: allTeams, error } = await supabase.from("teams").select("name");
-    if (error || !allTeams) return interaction.respond([]);
-
-    const list = allTeams
-      .filter(t => t.name.toLowerCase().includes(search))
-      .slice(0, 25)
-      .map(x => ({ name: x.name, value: x.name }));
-
-    return interaction.respond(list);
-  }
 });
 
 client.login(process.env.DISCORD_TOKEN);
