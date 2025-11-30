@@ -151,6 +151,71 @@ function buildOffersGroupedByConference(offers) {
 }
 
 /**
+ * Run the listteams display logic (posts to member-list channel)
+ * Called both by /listteams command and by team claim/reset flows
+ */
+async function runListTeamsDisplay() {
+  try {
+    const { data: teamsData, error } = await supabase.from('teams').select('*').order('conference', { ascending: true }).limit(1000);
+    if (error) throw error;
+
+    // Group by conference
+    const confMap = {};
+    for (const t of teamsData) {
+      const conf = t.conference || 'Independent';
+      if (!confMap[conf]) confMap[conf] = [];
+      confMap[conf].push(t);
+    }
+
+    const guild = client.guilds.cache.first();
+    if (!guild) return false;
+
+    const channel = guild.channels.cache.find(c => c.name === 'member-list' && c.isTextBased());
+    if (!channel) return false;
+
+    let text = "";
+    for (const [conf, tList] of Object.entries(confMap)) {
+      // only show teams with stars <= 2.0
+      const low = tList.filter(t => t.stars !== null && parseFloat(t.stars) <= 2.0);
+      if (low.length === 0) continue;
+
+      text += `\n__**${conf}**__\n`;
+      for (const t of low) {
+        if (t.taken_by) {
+          // mention the owner so it's clickable
+          text += `🏈 **${t.name}** — <@${t.taken_by}> (${t.taken_by_name || 'Coach'})\n`;
+        } else {
+          text += `🟢 **${t.name}** — Available\n`;
+        }
+      }
+    }
+
+    if (!text) text = "No 2★ or below teams available.";
+
+    const embed = {
+      title: "2★ and Below Teams",
+      description: text,
+      color: 0x2b2d31,
+      timestamp: new Date()
+    };
+
+    // delete old bot messages
+    const messages = await channel.messages.fetch({ limit: 50 });
+    const botMessages = messages.filter(m => m.author.id === client.user.id);
+    for (const m of botMessages.values()) {
+      try { await m.delete(); } catch {}
+    }
+
+    // send fresh list
+    await channel.send({ embeds: [embed] });
+    return true;
+  } catch (err) {
+    console.error("runListTeamsDisplay error:", err);
+    return false;
+  }
+}
+
+/**
  * Send job offers DM to user (used by slash and reaction flows)
  * returns the array of offered teams (objects) or throws.
  */
@@ -262,10 +327,40 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ ephemeral: true, content: `${coach.username} has no team.` });
       }
 
+      // Remove from teams table
       await supabase.from('teams').update({ taken_by: null, taken_by_name: null }).eq('id', teamData.id);
       jobOfferUsed.delete(coach.id);
 
-      return interaction.reply({ ephemeral: true, content: `Reset team ${teamData.name}.` });
+      // Delete team-specific channel
+      const guild = client.guilds.cache.first();
+      if (guild) {
+        try {
+          const teamChannel = guild.channels.cache.find(c => c.name === teamData.name.toLowerCase().replace(/\s+/g, '-') && c.isTextBased());
+          if (teamChannel) {
+            await teamChannel.delete("Team reset - removing team");
+            console.log(`Deleted channel for ${teamData.name}`);
+          }
+        } catch (err) {
+          console.error(`Failed to delete channel for ${teamData.name}:`, err);
+        }
+
+        // Remove Head Coach role
+        try {
+          const member = await guild.members.fetch(coach.id);
+          const headCoachRole = guild.roles.cache.find(r => r.name === 'Head Coach');
+          if (headCoachRole && member) {
+            await member.roles.remove(headCoachRole, "Team reset - removing coach role");
+            console.log(`Removed Head Coach role from ${coach.username}`);
+          }
+        } catch (err) {
+          console.error(`Failed to remove Head Coach role from ${coach.username}:`, err);
+        }
+      }
+
+      // Trigger listteams update
+      await runListTeamsDisplay();
+
+      return interaction.reply({ ephemeral: true, content: `Reset team ${teamData.name}. Channel deleted and role removed.` });
     }
 
     // ---------------------------
@@ -274,61 +369,10 @@ client.on('interactionCreate', async interaction => {
     if (name === 'listteams') {
       await interaction.deferReply({ ephemeral: true });
 
-      const { data: teamsData, error } = await supabase.from('teams').select('*').order('conference', { ascending: true }).limit(1000);
-      if (error) {
-        console.error("listteams error:", error);
-        return interaction.editReply(`Error: ${error.message}`);
+      const success = await runListTeamsDisplay();
+      if (!success) {
+        return interaction.editReply("Error posting team list.");
       }
-
-      // Group by conference
-      const confMap = {};
-      for (const t of teamsData) {
-        const conf = t.conference || 'Independent';
-        if (!confMap[conf]) confMap[conf] = [];
-        confMap[conf].push(t);
-      }
-
-      const guild = client.guilds.cache.first();
-      if (!guild) return interaction.editReply("No guild available.");
-
-      const channel = guild.channels.cache.find(c => c.name === 'member-list' && c.isTextBased());
-      if (!channel) return interaction.editReply("No #member-list channel found.");
-
-      let text = "";
-      for (const [conf, tList] of Object.entries(confMap)) {
-        // only show teams with stars <= 2.0
-        const low = tList.filter(t => t.stars !== null && parseFloat(t.stars) <= 2.0);
-        if (low.length === 0) continue;
-
-        text += `\n__**${conf}**__\n`;
-        for (const t of low) {
-          if (t.taken_by) {
-            // mention the owner so it's clickable
-            text += `❌ **${t.name}** — <@${t.taken_by}> (${t.taken_by_name || 'Coach'})\n`;
-          } else {
-            text += `🟢 **${t.name}** — Available\n`;
-          }
-        }
-      }
-
-      if (!text) text = "No 2★ or below teams available.";
-
-      const embed = {
-        title: "2★ and Below Teams",
-        description: text,
-        color: 0x2b2d31,
-        timestamp: new Date()
-      };
-
-      // delete old bot messages
-      const messages = await channel.messages.fetch({ limit: 50 });
-      const botMessages = messages.filter(m => m.author.id === client.user.id);
-      for (const m of botMessages.values()) {
-        try { await m.delete(); } catch {}
-      }
-
-      // send fresh list
-      await channel.send({ embeds: [embed] });
 
       return interaction.editReply("Team list posted to #member-list.");
     }
@@ -582,12 +626,47 @@ client.on('messageCreate', async msg => {
     msg.reply(`You claimed **${team.name}**!`);
     delete client.userOffers[userId];
 
-    // announce in general channel and create private channel if you want
+    // announce in general channel and perform setup
     const guild = client.guilds.cache.first();
     if (guild) {
       const general = guild.channels.cache.find(c => c.name === 'general' && c.isTextBased());
       if (general) general.send(`🏈 <@${userId}> has claimed **${team.name}**!`).catch(() => {});
+
+      // Create team-specific channel (named after school name)
+      try {
+        const channelName = team.name.toLowerCase().replace(/\s+/g, '-');
+        const newChannel = await guild.channels.create({
+          name: channelName,
+          type: ChannelType.GuildText,
+          reason: `Team channel for ${team.name}`
+        });
+        console.log(`Created channel #${channelName} for ${team.name}`);
+
+        // Send welcome message
+        await newChannel.send(`Welcome to **${team.name}**! <@${userId}> is the Head Coach.`);
+      } catch (err) {
+        console.error(`Failed to create channel for ${team.name}:`, err);
+      }
+
+      // Assign Head Coach role to user
+      try {
+        const member = await guild.members.fetch(userId);
+        let headCoachRole = guild.roles.cache.find(r => r.name === 'Head Coach');
+        if (!headCoachRole) {
+          headCoachRole = await guild.roles.create({
+            name: 'Head Coach',
+            reason: 'Role for team heads'
+          });
+        }
+        await member.roles.add(headCoachRole, "Claimed team");
+        console.log(`Assigned Head Coach role to ${msg.author.username}`);
+      } catch (err) {
+        console.error(`Failed to assign Head Coach role to ${msg.author.username}:`, err);
+      }
     }
+
+    // Trigger listteams update
+    await runListTeamsDisplay();
   } catch (err) {
     console.error("DM accept offer error:", err);
     try { await msg.reply("An error occurred processing your request."); } catch (e) {}
