@@ -320,7 +320,16 @@ client.on('interactionCreate', async interaction => {
         timestamp: new Date()
       };
 
+      // delete old bot messages
+      const messages = await channel.messages.fetch({ limit: 50 });
+      const botMessages = messages.filter(m => m.author.id === client.user.id);
+      for (const m of botMessages.values()) {
+        try { await m.delete(); } catch {}
+      }
+
+      // send fresh list
       await channel.send({ embeds: [embed] });
+
       return interaction.editReply("Team list posted to #member-list.");
     }
 
