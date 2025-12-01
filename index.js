@@ -94,6 +94,18 @@ const commands = [
     .setName('season-advance')
     .setDescription('Advance to next season (commissioner only)')
     .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('ranking')
+    .setDescription('Show current season rankings (commissioner only)')
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName('ranking-all-time')
+    .setDescription('Show all-time rankings across seasons (commissioner only)')
+    .setDMPermission(false)
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ].map(c => c.toJSON());
 
@@ -760,6 +772,253 @@ client.on('interactionCreate', async interaction => {
       }
 
       return interaction.reply({ ephemeral: true, content: `Season advanced to ${currentSeason + 1}, week reset to 0.` });
+    }
+
+    // ---------------------------
+    // /ranking (current season)
+    // ---------------------------
+    if (name === 'ranking') {
+      if (!interaction.member || !interaction.member.permissions || !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        return interaction.reply({ ephemeral: true, content: "Only the commissioner can view rankings." });
+      }
+
+      await interaction.deferReply({ flags: 64 }); // ephemeral
+
+      try {
+        const seasonResp = await supabase.from('meta').select('value').eq('key', 'current_season').maybeSingle();
+        const currentSeason = seasonResp.data?.value != null ? Number(seasonResp.data.value) : 1;
+
+        // Fetch all results for current season
+        const { data: results, error: resultsErr } = await supabase.from('results').select('*').eq('season', currentSeason);
+        if (resultsErr) throw resultsErr;
+
+        // Fetch all teams (to get star ratings and user team info)
+        const { data: allTeams, error: teamsErr } = await supabase.from('teams').select('*');
+        if (teamsErr) throw teamsErr;
+
+        // Build a map of team_id => team data for quick lookup
+        const teamMap = {};
+        const userTeams = []; // teams with taken_by (user-controlled)
+        for (const t of allTeams || []) {
+          teamMap[t.id] = t;
+          if (t.taken_by) userTeams.push(t.id);
+        }
+
+        // Calculate stats per user team
+        const teamStats = {};
+        for (const teamId of userTeams) {
+          teamStats[teamId] = {
+            team: teamMap[teamId],
+            wins: 0,
+            losses: 0,
+            userWins: 0,
+            userLosses: 0,
+            beatenOpponentStars: [] // track stars of beaten opponents for average
+          };
+        }
+
+        // Process results
+        if (results) {
+          for (const r of results) {
+            const isUserTeamHome = userTeams.includes(r.user_team_id);
+            const isUserTeamAway = userTeams.includes(r.opponent_team_id);
+
+            if (isUserTeamHome) {
+              const stats = teamStats[r.user_team_id];
+              if (r.result === 'W') {
+                stats.wins++;
+                // Track opponent stars if beaten
+                const oppTeam = teamMap[r.opponent_team_id];
+                if (oppTeam && oppTeam.stars != null) stats.beatenOpponentStars.push(parseFloat(oppTeam.stars));
+              } else {
+                stats.losses++;
+              }
+
+              // Check if vs another user team
+              if (isUserTeamAway) {
+                if (r.result === 'W') stats.userWins++; else stats.userLosses++;
+              }
+            } else if (isUserTeamAway) {
+              const stats = teamStats[r.opponent_team_id];
+              if (r.result === 'L') {
+                stats.wins++;
+                // Track opponent stars if beaten
+                const oppTeam = teamMap[r.user_team_id];
+                if (oppTeam && oppTeam.stars != null) stats.beatenOpponentStars.push(parseFloat(oppTeam.stars));
+              } else {
+                stats.losses++;
+              }
+
+              // Check if vs another user team
+              if (isUserTeamHome) {
+                if (r.result === 'L') stats.userWins++; else stats.userLosses++;
+              }
+            }
+          }
+        }
+
+        // Calculate average opponent stars for tiebreaker
+        for (const teamId in teamStats) {
+          const stars = teamStats[teamId].beatenOpponentStars;
+          teamStats[teamId].avgOppStars = stars.length > 0 ? stars.reduce((a, b) => a + b, 0) / stars.length : 0;
+        }
+
+        // Sort by: win%, then user-vs-user win%, then avg opponent stars
+        const sorted = Object.values(teamStats).sort((a, b) => {
+          const aWinPct = (a.wins + a.losses) > 0 ? a.wins / (a.wins + a.losses) : 0;
+          const bWinPct = (b.wins + b.losses) > 0 ? b.wins / (b.wins + b.losses) : 0;
+          if (aWinPct !== bWinPct) return bWinPct - aWinPct;
+
+          const aUserPct = (a.userWins + a.userLosses) > 0 ? a.userWins / (a.userWins + a.userLosses) : 0;
+          const bUserPct = (b.userWins + b.userLosses) > 0 ? b.userWins / (b.userWins + b.userLosses) : 0;
+          if (aUserPct !== bUserPct) return bUserPct - aUserPct;
+
+          return b.avgOppStars - a.avgOppStars;
+        });
+
+        // Build embed description
+        let description = '';
+        for (let i = 0; i < sorted.length; i++) {
+          const s = sorted[i];
+          const rank = i + 1;
+          const record = `${s.wins}-${s.losses}`;
+          const userRecord = `${s.userWins}-${s.userLosses}`;
+          description += `**${rank}.** ${s.team.name} (${record}) | Vs Users: ${userRecord}\n`;
+        }
+
+        if (!description) description = 'No user teams found.';
+
+        const embed = {
+          title: `🏆 Headset Dynasty Rankings – Season ${currentSeason}`,
+          description,
+          color: 0xffd700,
+          timestamp: new Date()
+        };
+
+        return interaction.editReply({ embeds: [embed] });
+      } catch (err) {
+        console.error('ranking command error:', err);
+        return interaction.editReply(`Error generating rankings: ${err.message}`);
+      }
+    }
+
+    // ---------------------------
+    // /ranking-all-time
+    // ---------------------------
+    if (name === 'ranking-all-time') {
+      if (!interaction.member || !interaction.member.permissions || !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        return interaction.reply({ ephemeral: true, content: "Only the commissioner can view rankings." });
+      }
+
+      await interaction.deferReply({ flags: 64 }); // ephemeral
+
+      try {
+        // Fetch all results (all seasons)
+        const { data: results, error: resultsErr } = await supabase.from('results').select('*');
+        if (resultsErr) throw resultsErr;
+
+        // Fetch all teams
+        const { data: allTeams, error: teamsErr } = await supabase.from('teams').select('*');
+        if (teamsErr) throw teamsErr;
+
+        // Build team map and identify user teams
+        const teamMap = {};
+        const userTeams = [];
+        for (const t of allTeams || []) {
+          teamMap[t.id] = t;
+          if (t.taken_by) userTeams.push(t.id);
+        }
+
+        // Calculate stats per user team (all-time)
+        const teamStats = {};
+        for (const teamId of userTeams) {
+          teamStats[teamId] = {
+            team: teamMap[teamId],
+            wins: 0,
+            losses: 0,
+            userWins: 0,
+            userLosses: 0,
+            beatenOpponentStars: []
+          };
+        }
+
+        // Process all results
+        if (results) {
+          for (const r of results) {
+            const isUserTeamHome = userTeams.includes(r.user_team_id);
+            const isUserTeamAway = userTeams.includes(r.opponent_team_id);
+
+            if (isUserTeamHome) {
+              const stats = teamStats[r.user_team_id];
+              if (r.result === 'W') {
+                stats.wins++;
+                const oppTeam = teamMap[r.opponent_team_id];
+                if (oppTeam && oppTeam.stars != null) stats.beatenOpponentStars.push(parseFloat(oppTeam.stars));
+              } else {
+                stats.losses++;
+              }
+              if (isUserTeamAway) {
+                if (r.result === 'W') stats.userWins++; else stats.userLosses++;
+              }
+            } else if (isUserTeamAway) {
+              const stats = teamStats[r.opponent_team_id];
+              if (r.result === 'L') {
+                stats.wins++;
+                const oppTeam = teamMap[r.user_team_id];
+                if (oppTeam && oppTeam.stars != null) stats.beatenOpponentStars.push(parseFloat(oppTeam.stars));
+              } else {
+                stats.losses++;
+              }
+              if (isUserTeamHome) {
+                if (r.result === 'L') stats.userWins++; else stats.userLosses++;
+              }
+            }
+          }
+        }
+
+        // Calculate average opponent stars
+        for (const teamId in teamStats) {
+          const stars = teamStats[teamId].beatenOpponentStars;
+          teamStats[teamId].avgOppStars = stars.length > 0 ? stars.reduce((a, b) => a + b, 0) / stars.length : 0;
+        }
+
+        // Sort
+        const sorted = Object.values(teamStats).sort((a, b) => {
+          const aWinPct = (a.wins + a.losses) > 0 ? a.wins / (a.wins + a.losses) : 0;
+          const bWinPct = (b.wins + b.losses) > 0 ? b.wins / (b.wins + b.losses) : 0;
+          if (aWinPct !== bWinPct) return bWinPct - aWinPct;
+
+          const aUserPct = (a.userWins + a.userLosses) > 0 ? a.userWins / (a.userWins + a.userLosses) : 0;
+          const bUserPct = (b.userWins + b.userLosses) > 0 ? b.userWins / (b.userWins + b.userLosses) : 0;
+          if (aUserPct !== bUserPct) return bUserPct - aUserPct;
+
+          return b.avgOppStars - a.avgOppStars;
+        });
+
+        // Build embed
+        let description = '';
+        for (let i = 0; i < sorted.length; i++) {
+          const s = sorted[i];
+          const rank = i + 1;
+          const record = `${s.wins}-${s.losses}`;
+          const userRecord = `${s.userWins}-${s.userLosses}`;
+          description += `**${rank}.** ${s.team.name} (${record}) | Vs Users: ${userRecord}\n`;
+        }
+
+        if (!description) description = 'No user teams found.';
+
+        const embed = {
+          title: `👑 Headset Dynasty All-Time Rankings`,
+          description,
+          color: 0xffd700,
+          timestamp: new Date()
+        };
+
+        return interaction.editReply({ embeds: [embed] });
+      } catch (err) {
+        console.error('ranking-all-time command error:', err);
+        return interaction.editReply(`Error generating all-time rankings: ${err.message}`);
+      }
     }
 
   } catch (err) {
