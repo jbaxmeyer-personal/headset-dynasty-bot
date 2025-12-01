@@ -438,9 +438,9 @@ client.on('interactionCreate', async interaction => {
       const guild = client.guilds.cache.first();
       if (guild) {
         try {
-          const textChannelsCategory = guild.channels.cache.find(c => c.name === 'Text Channels' && c.type === ChannelType.GuildCategory);
-          if (textChannelsCategory) {
-            const teamChannel = guild.channels.cache.find(c => c.name === teamData.name.toLowerCase().replace(/\s+/g, '-') && c.isTextBased() && c.parentId === textChannelsCategory.id);
+          const teamChannelsCategory = guild.channels.cache.find(c => c.name === 'Team Channels' && c.type === ChannelType.GuildCategory);
+          if (teamChannelsCategory) {
+            const teamChannel = guild.channels.cache.find(c => c.name === teamData.name.toLowerCase().replace(/\s+/g, '-') && c.isTextBased() && c.parentId === teamChannelsCategory.id);
             if (teamChannel) {
               await teamChannel.delete("Team reset - removing team");
               console.log(`Deleted channel for ${teamData.name}`);
@@ -861,18 +861,18 @@ client.on('messageCreate', async msg => {
       // Create team-specific channel (named after school name)
       try {
         const channelName = team.name.toLowerCase().replace(/\s+/g, '-');
-        // Find or create the Text Channels category
-        let textChannelsCategory = guild.channels.cache.find(c => c.name === 'Text Channels' && c.type === ChannelType.GuildCategory);
-        if (!textChannelsCategory) {
-          textChannelsCategory = await guild.channels.create({
-            name: 'Text Channels',
+        // Find or create the Team Channels category
+        let teamChannelsCategory = guild.channels.cache.find(c => c.name === 'Team Channels' && c.type === ChannelType.GuildCategory);
+        if (!teamChannelsCategory) {
+          teamChannelsCategory = await guild.channels.create({
+            name: 'Team Channels',
             type: ChannelType.GuildCategory
           });
         }
         const newChannel = await guild.channels.create({
           name: channelName,
           type: ChannelType.GuildText,
-          parent: textChannelsCategory.id,
+          parent: teamChannelsCategory.id,
           reason: `Team channel for ${team.name}`
         });
         console.log(`Created channel #${channelName} for ${team.name}`);
