@@ -99,62 +99,11 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
   try {
+    console.log("Clearing old global commands...");
+    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: [] });
     console.log("Registering guild commands...");
-    const registeredCommands = await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
-    console.log("Slash commands registered.");
-
-    // Set up role-based permissions: only 'head coach' role can see/use commands
-    // (except admin commands which are already restricted)
-    const guild = client.guilds.cache.first();
-    if (guild && registeredCommands && registeredCommands.length > 0) {
-      setTimeout(async () => {
-        try {
-          const headCoachRole = guild.roles.cache.find(r => r.name === 'head coach');
-          if (headCoachRole) {
-            // Get all command IDs for permission setup
-            const commandIds = {};
-            registeredCommands.forEach(cmd => {
-              commandIds[cmd.name] = cmd.id;
-            });
-
-            // Set permissions: allow 'head coach' role, deny @everyone
-            const permissions = [];
-            
-            // Commands visible to 'head coach' only
-            const publicCommands = ['joboffers', 'listteams', 'game-result', 'press-release'];
-            for (const cmdName of publicCommands) {
-              if (commandIds[cmdName]) {
-                permissions.push({
-                  id: commandIds[cmdName],
-                  permissions: [
-                    {
-                      id: headCoachRole.id,
-                      type: 'ROLE',
-                      permission: true
-                    },
-                    {
-                      id: guild.id,
-                      type: 'ROLE',
-                      permission: false
-                    }
-                  ]
-                });
-              }
-            }
-
-            if (permissions.length > 0) {
-              await rest.put(
-                Routes.guildApplicationCommandsPermissions(process.env.CLIENT_ID, process.env.GUILD_ID),
-                { body: permissions }
-              );
-              console.log("Command permissions set: head coach role only.");
-            }
-          }
-        } catch (err) {
-          console.error("Failed to set command permissions:", err);
-        }
-      }, 1000);
-    }
+    await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
+    console.log("Slash commands registered to guild.");
   } catch (err) {
     console.error("Failed to register commands:", err);
   }
@@ -163,8 +112,59 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 // ---------------------------------------------------------
 // BOT READY
 // ---------------------------------------------------------
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  // Set up role-based permissions after bot is ready
+  try {
+    const guild = client.guilds.cache.first();
+    if (!guild) {
+      console.warn("No guild found in cache. Skipping permission setup.");
+      return;
+    }
+
+    const headCoachRole = guild.roles.cache.find(r => r.name === 'head coach');
+    if (!headCoachRole) {
+      console.warn("'head coach' role not found. Skipping permission setup.");
+      return;
+    }
+
+    // Fetch all guild commands
+    const guildCommands = await guild.commands.fetch();
+    
+    if (guildCommands.size === 0) {
+      console.warn("No guild commands found.");
+      return;
+    }
+
+    // Commands that should be visible to 'head coach' only
+    const publicCommands = ['joboffers', 'listteams', 'game-result', 'press-release'];
+
+    for (const cmd of guildCommands.values()) {
+      if (publicCommands.includes(cmd.name)) {
+        // Set permissions: allow head coach, deny everyone else
+        await cmd.permissions.set({
+          permissions: [
+            {
+              id: headCoachRole.id,
+              type: 'ROLE',
+              permission: true
+            },
+            {
+              id: guild.id, // @everyone
+              type: 'ROLE',
+              permission: false
+            }
+          ]
+        });
+        console.log(`Set permissions for /${cmd.name}: head coach only`);
+      }
+    }
+
+    console.log("Command permissions configured.");
+  } catch (err) {
+    console.error("Failed to set command permissions:", err);
+  }
 });
 
 // ---------------------------------------------------------
