@@ -364,15 +364,21 @@ client.on('interactionCreate', async interaction => {
       const focused = interaction.options.getFocused(true);
       if (focused.name === 'opponent') {
         const search = (focused.value || '').toLowerCase();
-        const { data: teamsData, error } = await supabase.from('teams').select('name').limit(100);
+        const { data: teamsData, error } = await supabase.from('teams').select('name').limit(200);
         if (error) {
           console.error("Autocomplete supabase error:", error);
-          return interaction.respond([]);
+          try { await interaction.respond([]); } catch (e) { console.error('Failed to respond to autocomplete (empty):', e); }
+          return;
         }
         const list = (teamsData || []).map(r => r.name).filter(n => n.toLowerCase().includes(search));
         // sort alphabetically
         list.sort((a, b) => a.localeCompare(b));
-        return interaction.respond(list.slice(0, 25).map(n => ({ name: n, value: n })));
+        try {
+          await interaction.respond(list.slice(0, 25).map(n => ({ name: n, value: n })));
+        } catch (e) {
+          console.error('Failed to respond to autocomplete:', e);
+        }
+        return;
       }
     }
 
