@@ -468,7 +468,7 @@ client.on('interactionCreate', async interaction => {
               }
             }
 
-            const boxScore = `┌─ ${userTeam.name} ─┐\n ${userTeam.name.padEnd(15)} ${userScore}\n ${opponentTeam.name.padEnd(15)} ${opponentScore}\n Record: ${userTeam.name} ${wins}-${losses}\n Summary: ${summary}\n└───────────┘`;
+            const boxScore = `${userTeam.name.padEnd(15)} ${userScore}\n ${opponentTeam.name.padEnd(15)} ${opponentScore}\n Record: ${userTeam.name} ${wins}-${losses}\n Summary: ${summary}`;
             const embed = {
               title: `Game Result: ${userTeam.name} vs ${opponentTeam.name}`,
               color: resultText === 'W' ? 0x00ff00 : 0xff0000,
@@ -507,7 +507,7 @@ client.on('interactionCreate', async interaction => {
       if (guild) {
         const newsChannel = guild.channels.cache.find(c => c.name === 'news-feed' && c.isTextBased());
         if (newsChannel) {
-          const prBox = ${text};
+          const prBox = '${text}';
           const embed = {
             title: `Press Release`,
             color: 0xffa500,
