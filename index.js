@@ -118,6 +118,15 @@ client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   // Set up role-based permissions after bot is ready
+  // If CLIENT_SECRET isn't provided we cannot obtain an OAuth2 application
+  // bearer token required for the application permissions endpoint. In
+  // that case skip automatic permission setup and ask the user to set
+  // command permissions manually in the Discord UI.
+  if (!process.env.CLIENT_SECRET) {
+    console.log("Skipping automatic command-permission setup: no CLIENT_SECRET provided. Configure command permissions manually in your server settings if needed.");
+    return;
+  }
+
   try {
     const guild = client.guilds.cache.first();
     if (!guild) {
