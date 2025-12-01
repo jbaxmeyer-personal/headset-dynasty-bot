@@ -290,6 +290,8 @@ client.on('interactionCreate', async interaction => {
           return interaction.respond([]);
         }
         const list = (teamsData || []).map(r => r.name).filter(n => n.toLowerCase().includes(search));
+        // sort alphabetically
+        list.sort((a, b) => a.localeCompare(b));
         return interaction.respond(list.slice(0, 25).map(n => ({ name: n, value: n })));
       }
     }
@@ -404,9 +406,11 @@ client.on('interactionCreate', async interaction => {
       const opponentScore = interaction.options.getInteger('opponent_score');
       const summary = interaction.options.getString('summary');
 
-      // get current season from meta table (key = 'current_season'), fallback to 1
+      // get current season and week from meta table (keys = 'current_season','current_week'), fallback to 1 and 1
       const seasonResp = await supabase.from('meta').select('value').eq('key', 'current_season').maybeSingle();
+      const weekResp = await supabase.from('meta').select('value').eq('key','current_week').maybeSingle();
       const currentSeason = seasonResp.data?.value ? Number(seasonResp.data.value) : 1;
+      const currentWeek = weekResp.data?.value ? Number(weekResp.data.value) : 1;
 
       // find user's team
       const { data: userTeam, error: userTeamErr } = await supabase.from('teams').select('*').eq('taken_by', interaction.user.id).maybeSingle();
@@ -426,8 +430,10 @@ client.on('interactionCreate', async interaction => {
 
       const resultText = userScore > opponentScore ? 'W' : 'L';
 
+      // include current week when inserting results so weekly summaries can query by week
       const insertResp = await supabase.from('results').insert([{
         season: currentSeason,
+        week: currentWeek,
         user_team_id: userTeam.id,
         user_team_name: userTeam.name,
         opponent_team_id: opponentTeam.id,
@@ -443,27 +449,44 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ ephemeral: true, content: `Failed to save result: ${insertResp.error.message}` });
       }
 
-      // post a quick box score in news-feed
+      // post a quick box score in news-feed, showing the user's current season record instead of a single-letter result
       const guild = client.guilds.cache.first();
       if (guild) {
         const newsChannel = guild.channels.cache.find(c => c.name === 'news-feed' && c.isTextBased());
         if (newsChannel) {
-          const embed = {
-            title: `Game Result: ${userTeam.name} vs ${opponentTeam.name}`,
-            color: resultText === 'W' ? 0x00ff00 : 0xff0000,
-            fields: [
-              { name: userTeam.name, value: `${userScore}`, inline: true },
-              { name: opponentTeam.name, value: `${opponentScore}`, inline: true },
-              { name: 'Result', value: resultText, inline: false }
-            ],
-            description: summary,
-            timestamp: new Date()
-          };
-          await newsChannel.send({ embeds: [embed] }).catch(e => console.error("failed to post news-feed:", e));
+          // compute the user's record for the current season
+          try {
+            const seasonResultsResp = await supabase.from('results').select('*').eq('season', currentSeason).or(`user_team_id.eq.${userTeam.id},opponent_team_id.eq.${userTeam.id}`);
+            let wins = 0, losses = 0;
+            if (seasonResultsResp.data) {
+              for (const r of seasonResultsResp.data) {
+                if (r.user_team_id === userTeam.id) {
+                  if (r.result === 'W') wins++; else losses++;
+                } else if (r.opponent_team_id === userTeam.id) {
+                  if (r.result === 'W') losses++; else wins++;
+                }
+              }
+            }
+
+            const embed = {
+              title: `Game Result: ${userTeam.name} vs ${opponentTeam.name}`,
+              color: resultText === 'W' ? 0x00ff00 : 0xff0000,
+              fields: [
+                { name: userTeam.name, value: `${userScore}`, inline: true },
+                { name: opponentTeam.name, value: `${opponentScore}`, inline: true },
+                { name: 'Record', value: `${userTeam.name} ${wins}-${losses}`, inline: false }
+              ],
+              description: summary,
+              timestamp: new Date()
+            };
+            await newsChannel.send({ embeds: [embed] }).catch(e => console.error("failed to post news-feed:", e));
+          } catch (err) {
+            console.error('Failed to compute/send record for news-feed:', err);
+          }
         }
       }
 
-      return interaction.reply({ ephemeral: true, content: `Result recorded: ${userTeam.name} ${resultText} vs ${opponentTeam.name}` });
+      return interaction.reply({ ephemeral: true, content: `Result recorded: ${userTeam.name} vs ${opponentTeam.name}` });
     }
 
     // ---------------------------
@@ -514,17 +537,54 @@ client.on('interactionCreate', async interaction => {
       }
 
       // fetch news_feed posts since last advance (week == currentWeek)
+      // fetch news_feed posts since last advance (week == currentWeek)
       const newsResp = await supabase.from('news_feed').select('text').eq('week', currentWeek);
       let summaryText = "No news this week.";
       if (newsResp.data && newsResp.data.length > 0) {
         summaryText = newsResp.data.map(n => n.text).join("\n\n");
       }
 
-      // post weekly summary in news-feed
+      // Also include game results for this week (if results table has week column)
+      let weeklyResultsText = "";
+      try {
+        const allSeasonResp = await supabase.from('results').select('*').eq('season', currentSeason);
+        const weeklyResp = await supabase.from('results').select('*').eq('season', currentSeason).eq('week', currentWeek);
+        const records = {};
+        if (allSeasonResp.data) {
+          for (const r of allSeasonResp.data) {
+            if (!records[r.user_team_id]) records[r.user_team_id] = { name: r.user_team_name, wins: 0, losses: 0 };
+            if (!records[r.opponent_team_id]) records[r.opponent_team_id] = { name: r.opponent_team_name, wins: 0, losses: 0 };
+            if (r.result === 'W') {
+              records[r.user_team_id].wins++;
+              records[r.opponent_team_id].losses++;
+            } else {
+              records[r.user_team_id].losses++;
+              records[r.opponent_team_id].wins++;
+            }
+          }
+        }
+
+        if (weeklyResp.data && weeklyResp.data.length > 0) {
+          weeklyResultsText = weeklyResp.data.map(r => {
+            const rec = records[r.user_team_id] || { wins: 0, losses: 0 };
+            return `${r.user_team_name} ${r.user_score} - ${r.opponent_team_name} ${r.opponent_score}\n${r.user_team_name} (${rec.wins}-${rec.losses})`;
+          }).join('\n');
+        }
+      } catch (err) {
+        console.error('Failed to fetch weekly results for summary:', err);
+      }
+
+      // post weekly summary in news-feed (label week starting at 0)
       if (guild) {
         const newsFeedChannel = guild.channels.cache.find(c => c.name === 'news-feed' && c.isTextBased());
         if (newsFeedChannel) {
-          await newsFeedChannel.send(`**Weekly Summary (Week ${currentWeek})**\n\n${summaryText}`).catch(() => {});
+          const weekLabel = Math.max(0, currentWeek - 1);
+          const header = `**Weekly Summary (Season ${currentSeason} — Week ${weekLabel})**`;
+          const bodyParts = [];
+          if (summaryText) bodyParts.push(summaryText);
+          if (weeklyResultsText) bodyParts.push(`**Game Results:**\n${weeklyResultsText}`);
+          const body = bodyParts.length > 0 ? bodyParts.join('\n\n') : 'No news this week.';
+          await newsFeedChannel.send(`${header}\n\n${body}`).catch(() => {});
         }
       }
 
@@ -550,6 +610,19 @@ client.on('interactionCreate', async interaction => {
       // increment season, reset week to 1
       await supabase.from('meta').update({ value: currentSeason + 1 }).eq('key','current_season');
       await supabase.from('meta').update({ value: 1 }).eq('key','current_week');
+
+      // announce season advance in advance channel
+      try {
+        const guild = client.guilds.cache.first();
+        if (guild) {
+          const advanceChannel = guild.channels.cache.find(c => c.name === 'advance' && c.isTextBased());
+          if (advanceChannel) {
+            await advanceChannel.send(`We have advanced to Season ${currentSeason + 1}`).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.error('Failed to post season advance message:', err);
+      }
 
       return interaction.reply({ ephemeral: true, content: `Season advanced to ${currentSeason + 1}, week reset to 1.` });
     }
