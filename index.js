@@ -153,12 +153,12 @@ client.once('ready', async () => {
                 permissions: [
                   {
                     id: headCoachRole.id,
-                    type: 'ROLE',
+                    type: 1, // ROLE
                     permission: true
                   },
                   {
                     id: guild.id, // @everyone
-                    type: 'ROLE',
+                    type: 1, // ROLE
                     permission: false
                   }
                 ]
