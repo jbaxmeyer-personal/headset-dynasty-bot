@@ -502,11 +502,28 @@ client.on('interactionCreate', async interaction => {
       if (!userTeam) return interaction.reply({ ephemeral: true, content: "You don't control a team." });
 
       // find opponent team by name
-      const { data: opponentTeam, error: oppErr } = await supabase.from('teams').select('*').eq('name', opponentName).maybeSingle();
-      if (oppErr) {
-        console.error("game-result oppErr:", oppErr);
-        return interaction.reply({ ephemeral: true, content: `Error: ${oppErr.message}` });
+      // Do a case-insensitive lookup with sensible fallbacks so users can
+      // enter names with different casing or partial names (e.g. "fiu" vs "FIU").
+      let opponentTeam = null;
+      try {
+        const { data: teamsData, error: teamsErr } = await supabase.from('teams').select('*').limit(1000);
+        if (teamsErr) {
+          console.error('game-result teams fetch error:', teamsErr);
+          return interaction.reply({ ephemeral: true, content: `Error fetching teams: ${teamsErr.message}` });
+        }
+
+        const needle = (opponentName || '').toLowerCase().trim();
+        if (teamsData && teamsData.length > 0) {
+          // 1) exact case-insensitive match
+          opponentTeam = teamsData.find(t => (t.name || '').toLowerCase() === needle);
+          // 2) fallback: substring match
+          if (!opponentTeam) opponentTeam = teamsData.find(t => (t.name || '').toLowerCase().includes(needle));
+        }
+      } catch (err) {
+        console.error('game-result opponent lookup error:', err);
+        return interaction.reply({ ephemeral: true, content: `Error looking up opponent: ${err.message}` });
       }
+
       if (!opponentTeam) return interaction.reply({ ephemeral: true, content: `Opponent "${opponentName}" not found.` });
 
       const resultText = userScore > opponentScore ? 'W' : 'L';
