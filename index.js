@@ -507,7 +507,7 @@ client.on('interactionCreate', async interaction => {
       if (guild) {
         const newsChannel = guild.channels.cache.find(c => c.name === 'news-feed' && c.isTextBased());
         if (newsChannel) {
-          const prBox = `┌─ Press Release ─┐\n${text}\n└───────────────┘`;
+          const prBox = ${text};
           const embed = {
             title: `Press Release`,
             color: 0xffa500,
