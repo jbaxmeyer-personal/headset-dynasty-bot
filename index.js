@@ -144,22 +144,31 @@ client.once('ready', async () => {
 
     for (const cmd of guildCommands.values()) {
       if (publicCommands.includes(cmd.name)) {
-        // Set permissions: allow head coach, deny everyone else
-        await cmd.permissions.set({
-          permissions: [
+        // Set permissions using REST API (requires bot token, not OAuth2)
+        try {
+          await rest.put(
+            Routes.applicationCommandPermissions(process.env.CLIENT_ID, process.env.GUILD_ID, cmd.id),
             {
-              id: headCoachRole.id,
-              type: 'ROLE',
-              permission: true
-            },
-            {
-              id: guild.id, // @everyone
-              type: 'ROLE',
-              permission: false
+              body: {
+                permissions: [
+                  {
+                    id: headCoachRole.id,
+                    type: 'ROLE',
+                    permission: true
+                  },
+                  {
+                    id: guild.id, // @everyone
+                    type: 'ROLE',
+                    permission: false
+                  }
+                ]
+              }
             }
-          ]
-        });
-        console.log(`Set permissions for /${cmd.name}: head coach only`);
+          );
+          console.log(`✓ Set permissions for /${cmd.name}: head coach only`);
+        } catch (permErr) {
+          console.error(`Failed to set permissions for /${cmd.name}:`, permErr.message);
+        }
       }
     }
 
