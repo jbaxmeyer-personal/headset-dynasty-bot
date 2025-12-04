@@ -1207,3 +1207,15 @@ process.on('SIGINT', () => _shutdown('SIGINT'));
 client.login(process.env.DISCORD_TOKEN).catch(e => {
   console.error("Failed to login:", e);
 });
+
+
+// SELF-PINGER TO PREVENT RENDER FROM SLEEPING
+const https = require('https');
+
+setInterval(() => {
+  https.get('https://headset-dynasty-bot.onrender.com/', (res) => {
+    // optional: console.log('Self-ping', res.statusCode);
+  }).on('error', (e) => {
+    // optional: console.error('Self-ping error:', e);
+  });
+}, 4 * 60 * 1000); // every 4 minutes (safe for Render free tier)
