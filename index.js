@@ -596,24 +596,48 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ ephemeral: true, content: `Failed to save result: ${insertResp.error.message}` });
       }
 
+      // Update records table for both teams (if applicable)
+      try {
+        const isOpponentUserControlled = opponentTeam.taken_by != null;
+
+        // Upsert/update submitting team's record
+        await supabase.from('records').upsert({
+          season: currentSeason,
+          team_id: userTeam.id,
+          team_name: userTeam.name,
+          wins: resultText === 'W' ? 1 : 0,
+          losses: resultText === 'L' ? 1 : 0,
+          user_wins: isOpponentUserControlled && resultText === 'W' ? 1 : 0,
+          user_losses: isOpponentUserControlled && resultText === 'L' ? 1 : 0
+        }, { onConflict: 'season,team_id' });
+
+        // If opponent is user-controlled, update their record too
+        if (isOpponentUserControlled) {
+          const oppResultText = resultText === 'W' ? 'L' : 'W';
+          await supabase.from('records').upsert({
+            season: currentSeason,
+            team_id: opponentTeam.id,
+            team_name: opponentTeam.name,
+            wins: oppResultText === 'W' ? 1 : 0,
+            losses: oppResultText === 'L' ? 1 : 0,
+            user_wins: oppResultText === 'W' ? 1 : 0,
+            user_losses: oppResultText === 'L' ? 1 : 0
+          }, { onConflict: 'season,team_id' });
+        }
+      } catch (err) {
+        console.error('Failed to update records table:', err);
+      }
+
       // post a quick box score in news-feed, showing the user's current season record instead of a single-letter result
       const guild = client.guilds.cache.first();
       if (guild) {
         const newsChannel = guild.channels.cache.find(c => c.name === 'news-feed' && c.isTextBased());
         if (newsChannel) {
-          // compute the user's record for the current season
+          // compute the user's record for the current season from records table
           try {
-            const seasonResultsResp = await supabase.from('results').select('*').eq('season', currentSeason).or(`user_team_id.eq.${userTeam.id},opponent_team_id.eq.${userTeam.id}`);
-            let wins = 0, losses = 0;
-            if (seasonResultsResp.data) {
-              for (const r of seasonResultsResp.data) {
-                if (r.user_team_id === userTeam.id) {
-                  if (r.result === 'W') wins++; else losses++;
-                } else if (r.opponent_team_id === userTeam.id) {
-                  if (r.result === 'W') losses++; else wins++;
-                }
-              }
-            }
+            const recordResp = await supabase.from('records').select('wins,losses').eq('season', currentSeason).eq('team_id', userTeam.id).maybeSingle();
+            const wins = recordResp.data?.wins || 0;
+            const losses = recordResp.data?.losses || 0;
 
             const boxScore = `${userTeam.name.padEnd(15)} ${userScore}\n ${opponentTeam.name.padEnd(15)} ${opponentScore}\n Record: ${userTeam.name} ${wins}-${losses}\n Summary: ${summary}`;
             const embed = {
@@ -819,102 +843,60 @@ client.on('interactionCreate', async interaction => {
         const seasonResp = await supabase.from('meta').select('value').eq('key', 'current_season').maybeSingle();
         const currentSeason = seasonResp.data?.value != null ? Number(seasonResp.data.value) : 1;
 
-        // Fetch all results for current season
+        // Fetch records for current season
+        const { data: records, error: recordsErr } = await supabase.from('records').select('*').eq('season', currentSeason);
+        if (recordsErr) throw recordsErr;
+
+        // Fetch all user vs user results for H2H tiebreaking
         const { data: results, error: resultsErr } = await supabase.from('results').select('*').eq('season', currentSeason);
         if (resultsErr) throw resultsErr;
 
-        // Fetch all teams (to get star ratings and user team info)
-        const { data: allTeams, error: teamsErr } = await supabase.from('teams').select('*');
-        if (teamsErr) throw teamsErr;
-
-        // Build a map of team_id => team data for quick lookup
-        const teamMap = {};
-        const userTeams = []; // teams with taken_by (user-controlled)
-        for (const t of allTeams || []) {
-          teamMap[t.id] = t;
-          if (t.taken_by) userTeams.push(t.id);
-        }
-
-        // Calculate stats per user team
-        const teamStats = {};
-        for (const teamId of userTeams) {
-          teamStats[teamId] = {
-            team: teamMap[teamId],
-            wins: 0,
-            losses: 0,
-            userWins: 0,
-            userLosses: 0,
-            beatenOpponentStars: [] // track stars of beaten opponents for average
-          };
-        }
-
-        // Process results
+        // Build map of H2H records: "teamA_vs_teamB" => wins for teamA
+        const h2hMap = {};
         if (results) {
           for (const r of results) {
-            const isUserTeamHome = userTeams.includes(r.user_team_id);
-            const isUserTeamAway = userTeams.includes(r.opponent_team_id);
-
-            if (isUserTeamHome) {
-              const stats = teamStats[r.user_team_id];
-              if (r.result === 'W') {
-                stats.wins++;
-                // Track opponent stars if beaten
-                const oppTeam = teamMap[r.opponent_team_id];
-                if (oppTeam && oppTeam.stars != null) stats.beatenOpponentStars.push(parseFloat(oppTeam.stars));
-              } else {
-                stats.losses++;
-              }
-
-              // Check if vs another user team
-              if (isUserTeamAway) {
-                if (r.result === 'W') stats.userWins++; else stats.userLosses++;
-              }
-            } else if (isUserTeamAway) {
-              const stats = teamStats[r.opponent_team_id];
-              if (r.result === 'L') {
-                stats.wins++;
-                // Track opponent stars if beaten
-                const oppTeam = teamMap[r.user_team_id];
-                if (oppTeam && oppTeam.stars != null) stats.beatenOpponentStars.push(parseFloat(oppTeam.stars));
-              } else {
-                stats.losses++;
-              }
-
-              // Check if vs another user team
-              if (isUserTeamHome) {
-                if (r.result === 'L') stats.userWins++; else stats.userLosses++;
-              }
-            }
+            const key = `${r.user_team_id}_vs_${r.opponent_team_id}`;
+            if (!h2hMap[key]) h2hMap[key] = { wins: 0, losses: 0 };
+            if (r.result === 'W') h2hMap[key].wins++;
+            else h2hMap[key].losses++;
           }
         }
 
-        // Calculate average opponent stars for tiebreaker
-        for (const teamId in teamStats) {
-          const stars = teamStats[teamId].beatenOpponentStars;
-          teamStats[teamId].avgOppStars = stars.length > 0 ? stars.reduce((a, b) => a + b, 0) / stars.length : 0;
-        }
+        // Helper to calculate H2H win% between two teams
+        const getH2HWinPct = (teamAId, teamBId) => {
+          const key = `${teamAId}_vs_${teamBId}`;
+          if (!h2hMap[key]) return 0;
+          const { wins, losses } = h2hMap[key];
+          return (wins + losses) > 0 ? wins / (wins + losses) : 0;
+        };
 
-        // Sort by: win%, then user-vs-user win%, then avg opponent stars
-        const sorted = Object.values(teamStats).sort((a, b) => {
+        // Sort by: overall win%, then user-vs-user win%, then H2H win% (vs opponents), then average
+        const sorted = (records || []).sort((a, b) => {
           const aWinPct = (a.wins + a.losses) > 0 ? a.wins / (a.wins + a.losses) : 0;
           const bWinPct = (b.wins + b.losses) > 0 ? b.wins / (b.wins + b.losses) : 0;
           if (aWinPct !== bWinPct) return bWinPct - aWinPct;
 
-          const aUserPct = (a.userWins + a.userLosses) > 0 ? a.userWins / (a.userWins + a.userLosses) : 0;
-          const bUserPct = (b.userWins + b.userLosses) > 0 ? b.userWins / (b.userWins + b.userLosses) : 0;
+          const aUserPct = (a.user_wins + a.user_losses) > 0 ? a.user_wins / (a.user_wins + a.user_losses) : 0;
+          const bUserPct = (b.user_wins + b.user_losses) > 0 ? b.user_wins / (b.user_wins + b.user_losses) : 0;
           if (aUserPct !== bUserPct) return bUserPct - aUserPct;
 
-          return b.avgOppStars - a.avgOppStars;
+          // H2H tiebreaker
+          const aH2H = getH2HWinPct(a.team_id, b.team_id);
+          const bH2H = getH2HWinPct(b.team_id, a.team_id);
+          if (aH2H !== bH2H) return bH2H - aH2H;
+
+          // Fallback: stability
+          return 0;
         });
 
         // Build embed description
         let description = '';
         for (let i = 0; i < sorted.length; i++) {
-          const s = sorted[i];
+          const r = sorted[i];
           const rank = i + 1;
-          const record = `${s.wins}-${s.losses}`;
-          const userRecord = `${s.userWins}-${s.userLosses}`;
-          description += `**${rank}.** ${s.team.name} (${record}) | Vs Users: ${userRecord}\n`;
+          const record = `${r.wins}-${r.losses}`;
+          const userRecord = `${r.user_wins}-${r.user_losses}`;
+          description += `**${rank}.** ${r.team_name} (${record}) | Vs Users: ${userRecord}\n`;
         }
 
         if (!description) description = 'No user teams found.';
@@ -944,96 +926,80 @@ client.on('interactionCreate', async interaction => {
       await interaction.deferReply({ flags: 64 }); // ephemeral
 
       try {
-        // Fetch all results (all seasons)
+        // Fetch all records (all seasons) and aggregate by team
+        const { data: allRecords, error: recordsErr } = await supabase.from('records').select('*');
+        if (recordsErr) throw recordsErr;
+
+        // Fetch all results (all seasons) for H2H
         const { data: results, error: resultsErr } = await supabase.from('results').select('*');
         if (resultsErr) throw resultsErr;
 
-        // Fetch all teams
-        const { data: allTeams, error: teamsErr } = await supabase.from('teams').select('*');
-        if (teamsErr) throw teamsErr;
-
-        // Build team map and identify user teams
-        const teamMap = {};
-        const userTeams = [];
-        for (const t of allTeams || []) {
-          teamMap[t.id] = t;
-          if (t.taken_by) userTeams.push(t.id);
-        }
-
-        // Calculate stats per user team (all-time)
-        const teamStats = {};
-        for (const teamId of userTeams) {
-          teamStats[teamId] = {
-            team: teamMap[teamId],
-            wins: 0,
-            losses: 0,
-            userWins: 0,
-            userLosses: 0,
-            beatenOpponentStars: []
-          };
-        }
-
-        // Process all results
+        // Build map of H2H records
+        const h2hMap = {};
         if (results) {
           for (const r of results) {
-            const isUserTeamHome = userTeams.includes(r.user_team_id);
-            const isUserTeamAway = userTeams.includes(r.opponent_team_id);
-
-            if (isUserTeamHome) {
-              const stats = teamStats[r.user_team_id];
-              if (r.result === 'W') {
-                stats.wins++;
-                const oppTeam = teamMap[r.opponent_team_id];
-                if (oppTeam && oppTeam.stars != null) stats.beatenOpponentStars.push(parseFloat(oppTeam.stars));
-              } else {
-                stats.losses++;
-              }
-              if (isUserTeamAway) {
-                if (r.result === 'W') stats.userWins++; else stats.userLosses++;
-              }
-            } else if (isUserTeamAway) {
-              const stats = teamStats[r.opponent_team_id];
-              if (r.result === 'L') {
-                stats.wins++;
-                const oppTeam = teamMap[r.user_team_id];
-                if (oppTeam && oppTeam.stars != null) stats.beatenOpponentStars.push(parseFloat(oppTeam.stars));
-              } else {
-                stats.losses++;
-              }
-              if (isUserTeamHome) {
-                if (r.result === 'L') stats.userWins++; else stats.userLosses++;
-              }
-            }
+            const key = `${r.user_team_id}_vs_${r.opponent_team_id}`;
+            if (!h2hMap[key]) h2hMap[key] = { wins: 0, losses: 0 };
+            if (r.result === 'W') h2hMap[key].wins++;
+            else h2hMap[key].losses++;
           }
         }
 
-        // Calculate average opponent stars
-        for (const teamId in teamStats) {
-          const stars = teamStats[teamId].beatenOpponentStars;
-          teamStats[teamId].avgOppStars = stars.length > 0 ? stars.reduce((a, b) => a + b, 0) / stars.length : 0;
+        // Helper to calculate H2H win%
+        const getH2HWinPct = (teamAId, teamBId) => {
+          const key = `${teamAId}_vs_${teamBId}`;
+          if (!h2hMap[key]) return 0;
+          const { wins, losses } = h2hMap[key];
+          return (wins + losses) > 0 ? wins / (wins + losses) : 0;
+        };
+
+        // Aggregate records by team (sum across all seasons)
+        const teamAggregates = {};
+        if (allRecords) {
+          for (const r of allRecords) {
+            if (!teamAggregates[r.team_id]) {
+              teamAggregates[r.team_id] = {
+                team_id: r.team_id,
+                team_name: r.team_name,
+                wins: 0,
+                losses: 0,
+                user_wins: 0,
+                user_losses: 0
+              };
+            }
+            teamAggregates[r.team_id].wins += r.wins;
+            teamAggregates[r.team_id].losses += r.losses;
+            teamAggregates[r.team_id].user_wins += r.user_wins;
+            teamAggregates[r.team_id].user_losses += r.user_losses;
+          }
         }
 
-        // Sort
-        const sorted = Object.values(teamStats).sort((a, b) => {
+        // Sort by: overall win%, then user-vs-user win%, then H2H
+        const sorted = Object.values(teamAggregates).sort((a, b) => {
           const aWinPct = (a.wins + a.losses) > 0 ? a.wins / (a.wins + a.losses) : 0;
           const bWinPct = (b.wins + b.losses) > 0 ? b.wins / (b.wins + b.losses) : 0;
           if (aWinPct !== bWinPct) return bWinPct - aWinPct;
 
-          const aUserPct = (a.userWins + a.userLosses) > 0 ? a.userWins / (a.userWins + a.userLosses) : 0;
-          const bUserPct = (b.userWins + b.userLosses) > 0 ? b.userWins / (b.userWins + b.userLosses) : 0;
+          const aUserPct = (a.user_wins + a.user_losses) > 0 ? a.user_wins / (a.user_wins + a.user_losses) : 0;
+          const bUserPct = (b.user_wins + b.user_losses) > 0 ? b.user_wins / (b.user_wins + b.user_losses) : 0;
           if (aUserPct !== bUserPct) return bUserPct - aUserPct;
 
-          return b.avgOppStars - a.avgOppStars;
+          // H2H tiebreaker
+          const aH2H = getH2HWinPct(a.team_id, b.team_id);
+          const bH2H = getH2HWinPct(b.team_id, a.team_id);
+          if (aH2H !== bH2H) return bH2H - aH2H;
+
+          return 0;
         });
 
         // Build embed
         let description = '';
         for (let i = 0; i < sorted.length; i++) {
-          const s = sorted[i];
+          const r = sorted[i];
           const rank = i + 1;
-          const record = `${s.wins}-${s.losses}`;
-          const userRecord = `${s.userWins}-${s.userLosses}`;
-          description += `**${rank}.** ${s.team.name} (${record}) | Vs Users: ${userRecord}\n`;
+          const record = `${r.wins}-${r.losses}`;
+          const userRecord = `${r.user_wins}-${r.user_losses}`;
+          description += `**${rank}.** ${r.team_name} (${record}) | Vs Users: ${userRecord}\n`;
         }
 
         if (!description) description = 'No user teams found.';
