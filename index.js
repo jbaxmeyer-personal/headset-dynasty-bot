@@ -748,7 +748,17 @@ client.on('interactionCreate', async interaction => {
             const wins = recordResp.data?.wins || 0;
             const losses = recordResp.data?.losses || 0;
 
-            const boxScore = `${userTeam.name.padEnd(15)} ${userScore}\n ${opponentTeam.name.padEnd(15)} ${opponentScore}\n Record: ${userTeam.name} ${wins}-${losses}\n Summary: ${summary}`;
+            let recordText = `Record: ${userTeam.name} ${wins}-${losses}`;
+            
+            // If opponent is user-controlled, show their record too
+            if (isOpponentUserControlled) {
+              const oppRecordResp = await supabase.from('records').select('wins,losses').eq('season', currentSeason).eq('team_id', opponentTeam.id).maybeSingle();
+              const oppWins = oppRecordResp.data?.wins || 0;
+              const oppLosses = oppRecordResp.data?.losses || 0;
+              recordText += `, ${opponentTeam.name} ${oppWins}-${oppLosses}`;
+            }
+
+            const boxScore = `${userTeam.name.padEnd(15)} ${userScore}\n ${opponentTeam.name.padEnd(15)} ${opponentScore}\n ${recordText}\n Summary: ${summary}`;
             const embed = {
               title: `Game Result: ${userTeam.name} vs ${opponentTeam.name}`,
               color: resultText === 'W' ? 0x00ff00 : 0xff0000,
@@ -852,9 +862,28 @@ client.on('interactionCreate', async interaction => {
         }
 
         if (weeklyResp.data && weeklyResp.data.length > 0) {
+          // Fetch teams to check if opponent is user-controlled
+          const { data: teamsData } = await supabase.from('teams').select('id,taken_by');
+          const teamsMap = {};
+          if (teamsData) {
+            for (const t of teamsData) {
+              teamsMap[t.id] = t.taken_by;
+            }
+          }
+
           weeklyResultsText = weeklyResp.data.map(r => {
-            const rec = records[r.user_team_id] || { wins: 0, losses: 0 };
-            return `${r.user_team_name} ${r.user_score} - ${r.opponent_team_name} ${r.opponent_score}\n${r.user_team_name} (${rec.wins}-${rec.losses})`;
+            const userRec = records[r.user_team_id] || { wins: 0, losses: 0 };
+            const oppRec = records[r.opponent_team_id] || { wins: 0, losses: 0 };
+            const isOppUserControlled = teamsMap[r.opponent_team_id] != null;
+            
+            let result = `${r.user_team_name} ${r.user_score} - ${r.opponent_team_name} ${r.opponent_score}\n${r.user_team_name} (${userRec.wins}-${userRec.losses})`;
+            
+            // If opponent is user-controlled, add their record too
+            if (isOppUserControlled) {
+              result += `\n${r.opponent_team_name} (${oppRec.wins}-${oppRec.losses})`;
+            }
+            
+            return result;
           }).join('\n\n');
         }
       } catch (err) {
