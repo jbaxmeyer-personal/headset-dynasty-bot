@@ -984,7 +984,7 @@ client.on('interactionCreate', async interaction => {
           const teamName = r.team_name;
           
           // Format: "1. displayName teamName record (vsUserRecord)"
-          description += `${rank.toString().padEnd(3, ' ')} ${displayName.padEnd(20, ' ')} ${teamName.padEnd(25, ' ')} ${record.padEnd(3, ' ')} (${userRecord})\n`;
+          description += `${rank.toString().padEnd(3, ' ')} ${displayName.padEnd(20, ' ')} ${teamName.padEnd(30, ' ')} ${record.padEnd(6, ' ')} (${userRecord})\n`;
         }
 
         if (!description) description = 'No user teams found.';
@@ -1110,7 +1110,7 @@ client.on('interactionCreate', async interaction => {
           const displayName = r.taken_by_name || 'Unknown';
           
           // Format: "1. displayName record (vsUserRecord)" - no team name for all-time
-          description += `${rank.toString().padEnd(3, ' ')} ${displayName.padEnd(20, ' ')} ${record.padEnd(3, ' ')} (${userRecord})\n`;
+          description += `${rank.toString().padEnd(3, ' ')} ${displayName.padEnd(20, ' ')} ${record.padEnd(6, ' ')} (${userRecord})\n`;
         }
 
         if (!description) description = 'No user teams found.';
