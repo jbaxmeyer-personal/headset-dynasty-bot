@@ -679,32 +679,58 @@ client.on('interactionCreate', async interaction => {
       try {
         const isOpponentUserControlled = opponentTeam.taken_by != null;
 
-        // Upsert/update submitting user's record (keyed by season + taken_by, not team_id)
+        // Fetch existing record for submitting user
+        const { data: existingRecord } = await supabase
+          .from('records')
+          .select('*')
+          .eq('season', currentSeason)
+          .eq('team_id', userTeam.id)
+          .maybeSingle();
+
+        // Calculate new totals by incrementing existing values
+        const newWins = (existingRecord?.wins || 0) + (resultText === 'W' ? 1 : 0);
+        const newLosses = (existingRecord?.losses || 0) + (resultText === 'L' ? 1 : 0);
+        const newUserWins = (existingRecord?.user_wins || 0) + (isOpponentUserControlled && resultText === 'W' ? 1 : 0);
+        const newUserLosses = (existingRecord?.user_losses || 0) + (isOpponentUserControlled && resultText === 'L' ? 1 : 0);
+
+        // Upsert with incremented values
         await supabase.from('records').upsert({
           season: currentSeason,
           team_id: userTeam.id,
           team_name: userTeam.name,
           taken_by: userTeam.taken_by,
           taken_by_name: userTeam.taken_by_name || interaction.user.username,
-          wins: resultText === 'W' ? 1 : 0,
-          losses: resultText === 'L' ? 1 : 0,
-          user_wins: isOpponentUserControlled && resultText === 'W' ? 1 : 0,
-          user_losses: isOpponentUserControlled && resultText === 'L' ? 1 : 0
+          wins: newWins,
+          losses: newLosses,
+          user_wins: newUserWins,
+          user_losses: newUserLosses
         }, { onConflict: 'season,team_id' });
 
         // If opponent is user-controlled, update their record too
         if (isOpponentUserControlled) {
+          const { data: existingOppRecord } = await supabase
+            .from('records')
+            .select('*')
+            .eq('season', currentSeason)
+            .eq('team_id', opponentTeam.id)
+            .maybeSingle();
+
           const oppResultText = resultText === 'W' ? 'L' : 'W';
+          const newOppWins = (existingOppRecord?.wins || 0) + (oppResultText === 'W' ? 1 : 0);
+          const newOppLosses = (existingOppRecord?.losses || 0) + (oppResultText === 'L' ? 1 : 0);
+          const newOppUserWins = (existingOppRecord?.user_wins || 0) + (oppResultText === 'W' ? 1 : 0);
+          const newOppUserLosses = (existingOppRecord?.user_losses || 0) + (oppResultText === 'L' ? 1 : 0);
+
           await supabase.from('records').upsert({
             season: currentSeason,
             team_id: opponentTeam.id,
             team_name: opponentTeam.name,
             taken_by: opponentTeam.taken_by,
             taken_by_name: opponentTeam.taken_by_name || 'Unknown',
-            wins: oppResultText === 'W' ? 1 : 0,
-            losses: oppResultText === 'L' ? 1 : 0,
-            user_wins: oppResultText === 'W' ? 1 : 0,
-            user_losses: oppResultText === 'L' ? 1 : 0
+            wins: newOppWins,
+            losses: newOppLosses,
+            user_wins: newOppUserWins,
+            user_losses: newOppUserLosses
           }, { onConflict: 'season,team_id' });
         }
       } catch (err) {
