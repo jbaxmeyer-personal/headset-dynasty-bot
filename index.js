@@ -816,9 +816,12 @@ client.on('interactionCreate', async interaction => {
     // /advance (commissioner only)
     // ---------------------------
     if (name === 'advance') {
+      // Defer reply immediately to avoid interaction timeout
+      await interaction.deferReply({ ephemeral: true });
+
       // commissioner check
       if (!interaction.member || !interaction.member.permissions || !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        return interaction.reply({ ephemeral: true, content: "Only the commissioner can advance the week." });
+        return interaction.editReply("Only the commissioner can advance the week.");
       }
 
       // get current week and season (allow week 0)
@@ -934,7 +937,7 @@ client.on('interactionCreate', async interaction => {
       const newWeek = currentWeek + 1;
       await supabase.from('meta').update({ value: newWeek }).eq('key', 'current_week');
 
-      return interaction.reply({ ephemeral: true, content: `Advanced week to ${newWeek}.` });
+      return interaction.editReply(`Advanced week to ${newWeek}.`);
     }
 
     // ---------------------------
