@@ -1340,6 +1340,57 @@ client.on('interactionCreate', async interaction => {
 });
 
 // ---------------------------------------------------------
+// GUILD MEMBER REMOVE HANDLER (auto-reset team when user leaves)
+// ---------------------------------------------------------
+client.on('guildMemberRemove', async (member) => {
+  try {
+    const userId = member.user.id;
+    console.log(`User ${member.user.tag} (${userId}) left the server. Checking for team...`);
+
+    // Find team by taken_by
+    const { data: teamData, error } = await supabase.from('teams').select('*').eq('taken_by', userId).limit(1).maybeSingle();
+    if (error) {
+      console.error("guildMemberRemove query error:", error);
+      return;
+    }
+    if (!teamData) {
+      console.log(`User ${userId} had no team.`);
+      return;
+    }
+
+    console.log(`User ${userId} had team ${teamData.name}. Resetting...`);
+
+    // Remove from teams table
+    await supabase.from('teams').update({ taken_by: null, taken_by_name: null }).eq('id', teamData.id);
+    jobOfferUsed.delete(userId);
+
+    // Delete team-specific channel
+    const guild = member.guild;
+    if (guild) {
+      try {
+        const teamChannelsCategory = guild.channels.cache.find(c => c.name === 'Team Channels' && c.type === ChannelType.GuildCategory);
+        if (teamChannelsCategory) {
+          const teamChannel = guild.channels.cache.find(c => c.name === teamData.name.toLowerCase().replace(/\s+/g, '-') && c.isTextBased() && c.parentId === teamChannelsCategory.id);
+          if (teamChannel) {
+            await teamChannel.delete("User left server - removing team");
+            console.log(`Deleted channel for ${teamData.name}`);
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to delete channel for ${teamData.name}:`, err);
+      }
+    }
+
+    // Trigger listteams update
+    await runListTeamsDisplay();
+
+    console.log(`Successfully reset team ${teamData.name} for departed user ${userId}`);
+  } catch (err) {
+    console.error("guildMemberRemove error:", err);
+  }
+});
+
+// ---------------------------------------------------------
 // REACTION HANDLER (for rules reaction -> trigger job offers)
 // ---------------------------------------------------------
 // Behavior: when a user reacts with ✅ in the "rules" channel, send them job offers
