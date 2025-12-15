@@ -1058,7 +1058,7 @@ client.on('interactionCreate', async interaction => {
           return 0;
         });
 
-        // Build embed description
+        // Build embed description (2 lines per team for mobile-friendly display)
         let description = '';
         for (let i = 0; i < sorted.length; i++) {
           const r = sorted[i];
@@ -1068,12 +1068,15 @@ client.on('interactionCreate', async interaction => {
           const displayName = r.taken_by_name || r.team_name;
           const teamName = r.team_name;
           
-          // Format: "1. displayName teamName record (vsUserRecord)"
-          description += `${rank.toString().padEnd(2)} ${displayName.padEnd(21)} ${teamName.padEnd(19)} ${record.padEnd(4)} (${userRecord})\n`;
+          // Format (2 lines per entry):
+          // 1.  DisplayName
+          //     Team Name - 10-2 (8-1)
+          description += `${rank.toString().padStart(2, ' ')}.  ${displayName}\n`;
+          description += `    ${teamName} - ${record} (${userRecord})\n\n`;
         }
 
         if (!description) description = 'No user teams found.';
-        else description += `\n*Record in parentheses is vs user teams only*`;
+        else description += `*Record in parentheses is vs user teams only*`;
 
         const embed = {
           title: `🏆 Headset Dynasty Rankings – Season ${currentSeason}`,
@@ -1203,7 +1206,7 @@ client.on('interactionCreate', async interaction => {
           return 0;
         });
 
-        // Build embed
+        // Build embed (2 lines per user for mobile-friendly display)
         let description = '';
         for (let i = 0; i < sorted.length; i++) {
           const r = sorted[i];
@@ -1212,12 +1215,15 @@ client.on('interactionCreate', async interaction => {
           const userRecord = `${r.user_wins}-${r.user_losses}`;
           const displayName = r.taken_by_name || 'Unknown';
           
-          // Format: "1. displayName record (vsUserRecord)" - no team name for all-time
-          description += `${rank.toString().padEnd(3, ' ')} ${displayName.padEnd(20, ' ')} ${record.padEnd(6, ' ')} (${userRecord})\n`;
+          // Format (2 lines per entry):
+          // 1.  DisplayName
+          //     50-20 (45-15)
+          description += `${rank.toString().padStart(2, ' ')}.  ${displayName}\n`;
+          description += `    ${record} (${userRecord})\n\n`;
         }
 
         if (!description) description = 'No user teams found.';
-        else description += `\n*Record in parentheses is vs user teams only*`;
+        else description += `*Record in parentheses is vs user teams only*`;
 
         const embed = {
           title: `👑 Headset Dynasty All-Time Rankings`,
