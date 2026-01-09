@@ -161,7 +161,19 @@ const commands = [
       .setName('new_team')
       .setDescription('Select the new team')
       .setRequired(true)
-      .setAutocomplete(true))
+      .setAutocomplete(true)),
+
+  new SlashCommandBuilder()
+    .setName('any-game-result')
+    .setDescription('Enter a game result for any team (commissioner only)')
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption(option => option.setName('home_team').setDescription('Home team').setRequired(true).setAutocomplete(true))
+    .addStringOption(option => option.setName('away_team').setDescription('Away team').setRequired(true).setAutocomplete(true))
+    .addIntegerOption(option => option.setName('home_score').setDescription('Home team score').setRequired(true))
+    .addIntegerOption(option => option.setName('away_score').setDescription('Away team score').setRequired(true))
+    .addIntegerOption(option => option.setName('week').setDescription('Week number').setRequired(true))
+    .addStringOption(option => option.setName('summary').setDescription('Game summary').setRequired(true))
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -496,6 +508,25 @@ client.on('interactionCreate', async interaction => {
         }
         return;
       }
+
+      // Autocomplete for /any-game-result home_team and away_team
+      if (focused.name === 'home_team' || focused.name === 'away_team') {
+        const search = (focused.value || '').toLowerCase();
+        const { data: teamsData, error } = await supabase.from('teams').select('name').limit(200);
+        if (error) {
+          console.error("Autocomplete any-game-result error:", error);
+          try { await interaction.respond([]); } catch (e) { console.error('Failed to respond to autocomplete (empty):', e); }
+          return;
+        }
+        const list = (teamsData || []).map(r => r.name).filter(n => n.toLowerCase().includes(search));
+        list.sort((a, b) => a.localeCompare(b));
+        try {
+          await interaction.respond(list.slice(0, 25).map(n => ({ name: n, value: n })));
+        } catch (e) {
+          console.error('Failed to respond to autocomplete:', e);
+        }
+        return;
+      }
     }
 
     if (!interaction.isCommand()) return;
@@ -635,6 +666,22 @@ client.on('interactionCreate', async interaction => {
       }
       if (!userTeam) return interaction.reply({ ephemeral: true, content: "You don't control a team." });
 
+      // Check if user already submitted a result this week
+      const { data: existingUserResult } = await supabase
+        .from('results')
+        .select('*')
+        .eq('season', currentSeason)
+        .eq('week', currentWeek)
+        .eq('user_team_id', userTeam.id)
+        .maybeSingle();
+      
+      if (existingUserResult) {
+        return interaction.reply({ 
+          ephemeral: true, 
+          content: `You already submitted a result this week (vs ${existingUserResult.opponent_team_name}). You can only submit one result per week.`
+        });
+      }
+
       // find opponent team by name
       // Do a case-insensitive lookup with sensible fallbacks so users can
       // enter names with different casing or partial names (e.g. "fiu" vs "FIU").
@@ -660,6 +707,26 @@ client.on('interactionCreate', async interaction => {
 
       if (!opponentTeam) return interaction.reply({ ephemeral: true, content: `Opponent "${opponentName}" not found.` });
 
+      // Check if opponent (if user-controlled) already submitted this matchup
+      const isOpponentUserControlled = opponentTeam.taken_by != null;
+      if (isOpponentUserControlled) {
+        const { data: existingOpponentResult } = await supabase
+          .from('results')
+          .select('*')
+          .eq('season', currentSeason)
+          .eq('week', currentWeek)
+          .eq('user_team_id', opponentTeam.id)
+          .eq('opponent_team_id', userTeam.id)
+          .maybeSingle();
+        
+        if (existingOpponentResult) {
+          return interaction.reply({ 
+            ephemeral: true, 
+            content: `${opponentTeam.name} already submitted this game result. Only the home team (first to submit) can enter the result.`
+          });
+        }
+      }
+
       const resultText = userScore > opponentScore ? 'W' : 'L';
 
       // include current week when inserting results so weekly summaries can query by week
@@ -683,9 +750,6 @@ client.on('interactionCreate', async interaction => {
         console.error("results insert error:", insertResp.error);
         return interaction.reply({ ephemeral: true, content: `Failed to save result: ${insertResp.error.message}` });
       }
-
-      // Check if opponent is user-controlled (needed for both records update and news-feed post)
-      const isOpponentUserControlled = opponentTeam.taken_by != null;
 
       // Update records table for both users (if applicable)
       try {
@@ -784,6 +848,146 @@ client.on('interactionCreate', async interaction => {
       }
 
       return interaction.reply({ ephemeral: true, content: `Result recorded: ${userTeam.name} vs ${opponentTeam.name}` });
+    }
+
+    // ---------------------------
+    // /any-game-result (commissioner only)
+    // ---------------------------
+    if (name === 'any-game-result') {
+      // Commissioner check
+      if (!interaction.member || !interaction.member.permissions || !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        return interaction.reply({ ephemeral: true, content: "Only the commissioner can use this command." });
+      }
+
+      const homeTeamName = interaction.options.getString('home_team');
+      const awayTeamName = interaction.options.getString('away_team');
+      const homeScore = interaction.options.getInteger('home_score');
+      const awayScore = interaction.options.getInteger('away_score');
+      const week = interaction.options.getInteger('week');
+      const summary = interaction.options.getString('summary');
+
+      // Get current season
+      const seasonResp = await supabase.from('meta').select('value').eq('key', 'current_season').maybeSingle();
+      const currentSeason = seasonResp.data?.value != null ? Number(seasonResp.data.value) : 1;
+
+      // Find home team
+      let homeTeam = null;
+      let awayTeam = null;
+      try {
+        const { data: teamsData, error: teamsErr } = await supabase.from('teams').select('*').limit(1000);
+        if (teamsErr) throw teamsErr;
+
+        const homeNeedle = (homeTeamName || '').toLowerCase().trim();
+        const awayNeedle = (awayTeamName || '').toLowerCase().trim();
+
+        // Find home team
+        homeTeam = teamsData.find(t => (t.name || '').toLowerCase() === homeNeedle);
+        if (!homeTeam) homeTeam = teamsData.find(t => (t.name || '').toLowerCase().includes(homeNeedle));
+
+        // Find away team
+        awayTeam = teamsData.find(t => (t.name || '').toLowerCase() === awayNeedle);
+        if (!awayTeam) awayTeam = teamsData.find(t => (t.name || '').toLowerCase().includes(awayNeedle));
+      } catch (err) {
+        console.error('any-game-result team lookup error:', err);
+        return interaction.reply({ ephemeral: true, content: `Error looking up teams: ${err.message}` });
+      }
+
+      if (!homeTeam) return interaction.reply({ ephemeral: true, content: `Home team "${homeTeamName}" not found.` });
+      if (!awayTeam) return interaction.reply({ ephemeral: true, content: `Away team "${awayTeamName}" not found.` });
+
+      const homeResult = homeScore > awayScore ? 'W' : 'L';
+      const awayResult = homeScore > awayScore ? 'L' : 'W';
+
+      const isHomeUserControlled = homeTeam.taken_by != null;
+      const isAwayUserControlled = awayTeam.taken_by != null;
+
+      // Insert result for home team
+      const homeInsert = await supabase.from('results').insert([{
+        season: currentSeason,
+        week: week,
+        user_team_id: homeTeam.id,
+        user_team_name: homeTeam.name,
+        opponent_team_id: awayTeam.id,
+        opponent_team_name: awayTeam.name,
+        user_score: homeScore,
+        opponent_score: awayScore,
+        summary,
+        result: homeResult,
+        taken_by: homeTeam.taken_by,
+        taken_by_name: homeTeam.taken_by_name || null
+      }]);
+
+      if (homeInsert.error) {
+        console.error("any-game-result insert error:", homeInsert.error);
+        return interaction.reply({ ephemeral: true, content: `Failed to save result: ${homeInsert.error.message}` });
+      }
+
+      // Update records for home team (if user-controlled)
+      if (isHomeUserControlled) {
+        try {
+          const { data: existingRecord } = await supabase
+            .from('records')
+            .select('*')
+            .eq('season', currentSeason)
+            .eq('team_id', homeTeam.id)
+            .maybeSingle();
+
+          const newWins = (existingRecord?.wins || 0) + (homeResult === 'W' ? 1 : 0);
+          const newLosses = (existingRecord?.losses || 0) + (homeResult === 'L' ? 1 : 0);
+          const newUserWins = (existingRecord?.user_wins || 0) + (isAwayUserControlled && homeResult === 'W' ? 1 : 0);
+          const newUserLosses = (existingRecord?.user_losses || 0) + (isAwayUserControlled && homeResult === 'L' ? 1 : 0);
+
+          await supabase.from('records').upsert({
+            season: currentSeason,
+            team_id: homeTeam.id,
+            team_name: homeTeam.name,
+            taken_by: homeTeam.taken_by,
+            taken_by_name: homeTeam.taken_by_name,
+            wins: newWins,
+            losses: newLosses,
+            user_wins: newUserWins,
+            user_losses: newUserLosses
+          }, { onConflict: 'season,team_id' });
+        } catch (err) {
+          console.error('Failed to update home team records:', err);
+        }
+      }
+
+      // Update records for away team (if user-controlled)
+      if (isAwayUserControlled) {
+        try {
+          const { data: existingRecord } = await supabase
+            .from('records')
+            .select('*')
+            .eq('season', currentSeason)
+            .eq('team_id', awayTeam.id)
+            .maybeSingle();
+
+          const newWins = (existingRecord?.wins || 0) + (awayResult === 'W' ? 1 : 0);
+          const newLosses = (existingRecord?.losses || 0) + (awayResult === 'L' ? 1 : 0);
+          const newUserWins = (existingRecord?.user_wins || 0) + (isHomeUserControlled && awayResult === 'W' ? 1 : 0);
+          const newUserLosses = (existingRecord?.user_losses || 0) + (isHomeUserControlled && awayResult === 'L' ? 1 : 0);
+
+          await supabase.from('records').upsert({
+            season: currentSeason,
+            team_id: awayTeam.id,
+            team_name: awayTeam.name,
+            taken_by: awayTeam.taken_by,
+            taken_by_name: awayTeam.taken_by_name,
+            wins: newWins,
+            losses: newLosses,
+            user_wins: newUserWins,
+            user_losses: newUserLosses
+          }, { onConflict: 'season,team_id' });
+        } catch (err) {
+          console.error('Failed to update away team records:', err);
+        }
+      }
+
+      return interaction.reply({ 
+        ephemeral: true, 
+        content: `Result recorded for Week ${week}: ${homeTeam.name} ${homeScore} - ${awayTeam.name} ${awayScore}` 
+      });
     }
 
     // ---------------------------
