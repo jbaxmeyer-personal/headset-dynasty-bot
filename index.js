@@ -1557,7 +1557,7 @@ client.on('interactionCreate', async interaction => {
         // Find and rename the team channel
         const guild = interaction.guild;
         if (guild) {
-          const teamChannelCategory = guild.channels.cache.find(ch => ch.name === 'Team Channels' && ch.isCategory());
+          const teamChannelCategory = guild.channels.cache.find(ch => ch.name === 'Team Channels' && ch.type === ChannelType.GuildCategory);
           if (teamChannelCategory) {
             // Look for a channel with the old team name
             const oldChannel = guild.channels.cache.find(
