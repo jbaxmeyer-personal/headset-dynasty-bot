@@ -1463,7 +1463,7 @@ client.on('interactionCreate', async interaction => {
           // 1.  DisplayName
           //     Team Name
           //     50-20 (45-15)
-          description += `${rank.toString().padStart(2, ' ')}.  ${displayName}\n`;
+          description += `${rank.toString().padStart(2, ' ')}. ${displayName}\n`;
           description += `    ${teamName}\n`;
           description += `    ${record} (${userRecord})\n\n`;
         }
