@@ -1383,7 +1383,7 @@ client.on('interactionCreate', async interaction => {
         };
 
         // Fetch current users (only those with teams) and their current team names
-        const { data: currentUsers, error: usersErr } = await supabase.from('teams').select('taken_by, team_name').not('taken_by', 'is', null);
+        const { data: currentUsers, error: usersErr } = await supabase.from('teams').select('taken_by, name').not('taken_by', 'is', null);
         if (usersErr) throw usersErr;
         const currentUserIds = new Set((currentUsers || []).map(u => u.taken_by));
         
@@ -1391,7 +1391,7 @@ client.on('interactionCreate', async interaction => {
         const userTeamMap = {};
         if (currentUsers) {
           for (const u of currentUsers) {
-            userTeamMap[u.taken_by] = u.team_name;
+            userTeamMap[u.taken_by] = u.name;
           }
         }
 
