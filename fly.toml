@@ -1,0 +1,12 @@
+app = "headset-dynasty-bot"
+primary_region = "ord"
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
