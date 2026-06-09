@@ -6,25 +6,21 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 const commands = [
   new SlashCommandBuilder()
     .setName('setup')
-    .setDescription("Configure this server's dynasty league (admin only)")
+    .setDescription("Configure this server's dynasty league — bot creates channels/role automatically (admin only)")
     .setDMPermission(false)
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addChannelOption(o => o.setName('general').setDescription('General announcements channel').setRequired(true))
-    .addChannelOption(o => o.setName('rules').setDescription('Rules channel (✅ reaction triggers job offers)').setRequired(true))
-    .addChannelOption(o => o.setName('team_list').setDescription('#team-list channel').setRequired(true))
-    .addRoleOption(o => o.setName('coach_role').setDescription('The coach role to assign to new coaches').setRequired(true))
     .addStringOption(o => o
       .setName('allowed_roles')
-      .setDescription('Which coaching roles are available in this league')
-      .setRequired(true)
+      .setDescription('Which coaching roles are available (default: HC only)')
+      .setRequired(false)
       .addChoices(
-        { name: 'HC only', value: 'HC' },
+        { name: 'HC only (default)', value: 'HC' },
         { name: 'OC and DC only', value: 'OC,DC' },
         { name: 'All (HC, OC, DC)', value: 'HC,OC,DC' }
       ))
     .addStringOption(o => o
       .setName('conferences')
-      .setDescription('Comma-separated conferences, or ALL (e.g. "SEC,Big Ten,ACC"). Default: ALL')
+      .setDescription('Conferences to include, comma-separated (default: ALL). e.g. "SEC,Big Ten,ACC"')
       .setRequired(false))
     .addNumberOption(o => o
       .setName('min_stars')
@@ -37,6 +33,22 @@ const commands = [
       .setDescription('Maximum school prestige 0.0-5.0 (default 5.0)')
       .setMinValue(0)
       .setMaxValue(5)
+      .setRequired(false))
+    .addChannelOption(o => o
+      .setName('general')
+      .setDescription('Use an existing #general channel instead of creating one')
+      .setRequired(false))
+    .addChannelOption(o => o
+      .setName('rules')
+      .setDescription('Use an existing #rules channel instead of creating one')
+      .setRequired(false))
+    .addChannelOption(o => o
+      .setName('team_list')
+      .setDescription('Use an existing #team-list channel instead of creating one')
+      .setRequired(false))
+    .addRoleOption(o => o
+      .setName('coach_role')
+      .setDescription('Use an existing role instead of creating a "coach" role')
       .setRequired(false)),
 
   new SlashCommandBuilder()
@@ -70,6 +82,16 @@ const commands = [
       .setDescription('The new school')
       .setRequired(true)
       .setAutocomplete(true)),
+
+  new SlashCommandBuilder()
+    .setName('help')
+    .setDescription('Show available commands and how to set up this bot')
+    .setDMPermission(false),
+
+  new SlashCommandBuilder()
+    .setName('invite')
+    .setDescription('Get the link to add this bot to another server')
+    .setDMPermission(false),
 
 ].map(c => c.toJSON());
 

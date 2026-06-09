@@ -611,11 +611,8 @@ client.on('interactionCreate', async interaction => {
     if (name === 'setup') {
       await interaction.deferReply({ ephemeral: true });
 
-      const general = interaction.options.getChannel('general');
-      const rules = interaction.options.getChannel('rules');
-      const teamList = interaction.options.getChannel('team_list');
-      const coachRole = interaction.options.getRole('coach_role');
-      const allowedRoles = interaction.options.getString('allowed_roles');
+      const guild = interaction.guild;
+      const allowedRoles = interaction.options.getString('allowed_roles') ?? 'HC';
       const conferencesRaw = interaction.options.getString('conferences');
       const minStars = interaction.options.getNumber('min_stars');
       const maxStars = interaction.options.getNumber('max_stars');
@@ -624,9 +621,37 @@ client.on('interactionCreate', async interaction => {
         ? conferencesRaw.split(',').map(c => c.trim()).filter(Boolean).join(',')
         : null;
 
+      // Find or create #general
+      let general = interaction.options.getChannel('general')
+        || guild.channels.cache.find(c => c.name === 'general' && c.isTextBased());
+      if (!general) {
+        general = await guild.channels.create({ name: 'general', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
+      }
+
+      // Find or create #rules
+      let rules = interaction.options.getChannel('rules')
+        || guild.channels.cache.find(c => c.name === 'rules' && c.isTextBased());
+      if (!rules) {
+        rules = await guild.channels.create({ name: 'rules', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
+      }
+
+      // Find or create #team-list
+      let teamList = interaction.options.getChannel('team_list')
+        || guild.channels.cache.find(c => c.name === 'team-list' && c.isTextBased());
+      if (!teamList) {
+        teamList = await guild.channels.create({ name: 'team-list', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
+      }
+
+      // Find or create 'coach' role
+      let coachRole = interaction.options.getRole('coach_role')
+        || guild.roles.cache.find(r => r.name === 'coach');
+      if (!coachRole) {
+        coachRole = await guild.roles.create({ name: 'coach', reason: 'Dynasty bot setup' });
+      }
+
       const { error } = await supabase.from('leagues').upsert({
         guild_id: interaction.guildId,
-        name: interaction.guild.name,
+        name: guild.name,
         general_channel_id: general.id,
         rules_channel_id: rules.id,
         team_list_channel_id: teamList.id,
@@ -642,17 +667,63 @@ client.on('interactionCreate', async interaction => {
       invalidateLeagueCache(interaction.guildId);
 
       const confDisplay = allowedConferences || 'All conferences';
+      const created = [];
+      if (!interaction.options.getChannel('general') && general) created.push('#general');
+      if (!interaction.options.getChannel('rules') && rules) created.push('#rules');
+      if (!interaction.options.getChannel('team_list') && teamList) created.push('#team-list');
+      if (!interaction.options.getRole('coach_role') && coachRole) created.push('@coach role');
+
       return interaction.editReply(
         `✅ League configured!\n` +
+        (created.length ? `- Created: ${created.join(', ')}\n` : '') +
         `- General: ${general}\n` +
-        `- Rules: ${rules}\n` +
+        `- Rules: ${rules} — users react ✅ here to get job offers\n` +
         `- Team list: ${teamList}\n` +
         `- Coach role: ${coachRole}\n` +
         `- Allowed roles: **${allowedRoles}**\n` +
         `- Conferences: **${confDisplay}**\n` +
-        `- Stars range: **${minStars ?? 0.0}–${maxStars ?? 5.0}**\n\n` +
-        `Job offers are triggered when users react ✅ in ${rules}, or you can use /joboffers @user.`
+        `- Stars range: **${minStars ?? 0.0}–${maxStars ?? 5.0}**`
       );
+    }
+
+    // ---------------------------
+    // /help
+    // ---------------------------
+    if (name === 'help') {
+      return interaction.reply({
+        ephemeral: true,
+        content:
+          `## Headset Dynasty Bot\n` +
+          `This bot manages CFB27 online dynasty leagues — it sends job offer DMs to users and handles team assignments.\n\n` +
+          `**Admin setup (run once):**\n` +
+          `\`/setup\` — Configure this server. The bot will auto-create #general, #rules, #team-list, and a @coach role. ` +
+          `Add optional filters: \`allowed_roles\`, \`conferences\`, \`min_stars\`, \`max_stars\`.\n\n` +
+          `**Admin commands:**\n` +
+          `\`/joboffers @user\` — Send a user 5 job offer DMs from available schools\n` +
+          `\`/resetteam @user\` — Remove a coach: deletes their team channel, removes @coach role, clears nickname\n` +
+          `\`/move-coach @user\` — Move a coach to a different school\n` +
+          `\`/listteams\` — Refresh the #team-list channel\n\n` +
+          `**How users join:**\n` +
+          `React ✅ in #rules → bot sends 5 job offers via DM → user replies with a number to accept.\n\n` +
+          `**Want to add this bot to your server?**\n` +
+          `Use \`/invite\` to get the invite link.`
+      });
+    }
+
+    // ---------------------------
+    // /invite
+    // ---------------------------
+    if (name === 'invite') {
+      // Permissions: manage channels, manage roles, manage nicknames, send messages,
+      // embed links, read message history, manage messages, add reactions, view channels
+      const permissions = '402746448';
+      const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${client.user.id}&permissions=${permissions}&scope=bot%20applications.commands`;
+      return interaction.reply({
+        ephemeral: true,
+        content:
+          `**Add Headset Dynasty Bot to your server:**\n${inviteUrl}\n\n` +
+          `After adding the bot, run \`/setup\` in your server — it takes about 30 seconds and the bot handles the rest.`
+      });
     }
 
     // ---------------------------
