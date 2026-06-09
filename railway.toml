@@ -1,7 +1,0 @@
-[build]
-builder = "NIXPACKS"
-
-[deploy]
-restartPolicy = "always"
-# healthcheckPath = "/"
-# healthcheckTimeout = 100
