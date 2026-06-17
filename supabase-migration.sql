@@ -38,10 +38,10 @@ CREATE TABLE IF NOT EXISTS league_teams (
   UNIQUE(league_id, school_id)
 );
 
--- One-time: populate schools from old teams table (skip if already done)
-INSERT INTO schools (name, conference, stars)
-SELECT name, conference, stars FROM teams
-ON CONFLICT DO NOTHING;
+-- One-time: populate schools from old teams table (CFB26 migration — skip if starting fresh)
+-- INSERT INTO schools (name, conference, stars)
+-- SELECT name, conference, stars FROM teams
+-- ON CONFLICT DO NOTHING;
 
 -- ================================================================
 -- v2 additions — scheme support
