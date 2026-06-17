@@ -51,8 +51,9 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE schools ADD COLUMN IF NOT EXISTS offense_scheme TEXT;
 ALTER TABLE schools ADD COLUMN IF NOT EXISTS defense_scheme TEXT;
 
--- Add scheme filter toggle to leagues
+-- Add scheme filter toggle and offer count to leagues
 ALTER TABLE leagues ADD COLUMN IF NOT EXISTS scheme_filter BOOLEAN DEFAULT FALSE;
+ALTER TABLE leagues ADD COLUMN IF NOT EXISTS offer_count INTEGER DEFAULT 5;
 
 -- Add preferred scheme columns to league_teams
 ALTER TABLE league_teams ADD COLUMN IF NOT EXISTS preferred_offense_scheme TEXT;

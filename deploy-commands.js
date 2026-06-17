@@ -38,6 +38,12 @@ const commands = [
       .setName('scheme_filter')
       .setDescription('Filter job offers by coaching scheme compatibility? (default: No)')
       .setRequired(false))
+    .addIntegerOption(o => o
+      .setName('offer_count')
+      .setDescription('How many job offers to send each user (default: 5)')
+      .setMinValue(1)
+      .setMaxValue(5)
+      .setRequired(false))
     .addChannelOption(o => o
       .setName('general')
       .setDescription('Use an existing #general channel instead of creating one')

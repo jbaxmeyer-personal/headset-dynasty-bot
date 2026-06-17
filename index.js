@@ -489,7 +489,7 @@ async function advanceOfferFlow(user, league, offerData) {
     defenseScheme: offerData.preferredDefenseScheme
   };
 
-  const offers = await getAvailableSchools(league, 5, schemePrefs);
+  const offers = await getAvailableSchools(league, league.offer_count ?? 5, schemePrefs);
 
   if (!offers || offers.length === 0) {
     delete client.userOffers[user.id];
@@ -770,6 +770,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       const schemeFilter = interaction.options.getBoolean('scheme_filter') ?? false;
+      const offerCount = interaction.options.getInteger('offer_count') ?? 5;
 
       const { error } = await supabase.from('leagues').upsert({
         guild_id: interaction.guildId,
@@ -782,7 +783,8 @@ client.on('interactionCreate', async interaction => {
         allowed_conferences: allowedConferences,
         min_stars: minStars ?? 0.0,
         max_stars: maxStars ?? 5.0,
-        scheme_filter: schemeFilter
+        scheme_filter: schemeFilter,
+        offer_count: offerCount
       }, { onConflict: 'guild_id' });
 
       if (error) return interaction.editReply(`Setup failed: ${error.message}`);
@@ -806,7 +808,8 @@ client.on('interactionCreate', async interaction => {
         `- Allowed roles: **${allowedRoles}**\n` +
         `- Conferences: **${confDisplay}**\n` +
         `- Stars range: **${minStars ?? 0.0}–${maxStars ?? 5.0}**\n` +
-        `- Scheme filtering: **${schemeFilter ? 'On' : 'Off'}**`
+        `- Scheme filtering: **${schemeFilter ? 'On' : 'Off'}**\n` +
+        `- Job offers per user: **${offerCount}**`
       );
     }
 
