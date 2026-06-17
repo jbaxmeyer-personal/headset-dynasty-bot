@@ -235,6 +235,43 @@ function pickRandom(arr, n) {
 }
 
 // ---------------------------------------------------------
+// CFB27 SCHEME DATA (game-defined — do not edit without checking in-game)
+// ---------------------------------------------------------
+const OFFENSE_SCHEMES = [
+  'Option', 'Spread', 'Veer and Shoot', 'Air Raid',
+  'Pro Style', 'Power Spread', 'Run and Shoot', 'Pistol'
+];
+
+const DEFENSE_SCHEMES = [
+  '3-2-6', '3-3-5', '3-3-5 Tite', '3-4',
+  '3-4 Multiple', '4-2-5', '4-3', '4-3 Multiple'
+];
+
+// Compatible schools for each preferred scheme (includes self + adjacent + Multiple).
+// "Multiple" as a school's scheme is always compatible with any preference.
+const OFFENSE_COMPATIBLE = {
+  'Option':         ['Option', 'Spread', 'Pistol', 'Multiple'],
+  'Spread':         ['Spread', 'Air Raid', 'Veer and Shoot', 'Multiple'],
+  'Veer and Shoot': ['Veer and Shoot', 'Spread', 'Pistol', 'Multiple'],
+  'Air Raid':       ['Air Raid', 'Spread', 'Run and Shoot', 'Multiple'],
+  'Pro Style':      ['Pro Style', 'Power Spread', 'Pistol', 'Multiple'],
+  'Power Spread':   ['Power Spread', 'Pro Style', 'Spread', 'Multiple'],
+  'Run and Shoot':  ['Run and Shoot', 'Spread', 'Air Raid', 'Multiple'],
+  'Pistol':         ['Pistol', 'Pro Style', 'Option', 'Multiple'],
+};
+
+const DEFENSE_COMPATIBLE = {
+  '3-2-6':       ['3-2-6', '3-3-5', '4-2-5', 'Multiple'],
+  '3-3-5':       ['3-3-5', '3-3-5 Tite', '3-2-6', 'Multiple'],
+  '3-3-5 Tite':  ['3-3-5 Tite', '3-3-5', '3-2-6', 'Multiple'],
+  '3-4':         ['3-4', '3-4 Multiple', '3-3-5', 'Multiple'],
+  '3-4 Multiple':['3-4 Multiple', '3-4', '3-3-5', 'Multiple'],
+  '4-2-5':       ['4-2-5', '4-3', '4-3 Multiple', 'Multiple'],
+  '4-3':         ['4-3', '4-3 Multiple', '4-2-5', 'Multiple'],
+  '4-3 Multiple':['4-3 Multiple', '4-3', '4-2-5', 'Multiple'],
+};
+
+// ---------------------------------------------------------
 // LEAGUE CONFIG CACHE (one entry per guild ID)
 // ---------------------------------------------------------
 const leagueCache = new Map();
@@ -257,10 +294,11 @@ function invalidateLeagueCache(guildId) {
 
 // ---------------------------------------------------------
 // AVAILABLE SCHOOLS QUERY
-// Returns up to `count` random schools that match the league's filters
-// and haven't been claimed yet.
+// Returns up to `count` random schools matching league filters,
+// scheme preferences (if provided), and not yet claimed.
+// schemePrefs: { offenseScheme, defenseScheme }
 // ---------------------------------------------------------
-async function getAvailableSchools(league, count) {
+async function getAvailableSchools(league, count, schemePrefs = {}) {
   let q = supabase.from('schools').select('*')
     .gte('stars', league.min_stars ?? 0)
     .lte('stars', league.max_stars ?? 5);
@@ -268,6 +306,14 @@ async function getAvailableSchools(league, count) {
   if (league.allowed_conferences) {
     const confs = league.allowed_conferences.split(',').map(c => c.trim()).filter(Boolean);
     q = q.in('conference', confs);
+  }
+
+  // Scheme compatibility filtering
+  if (schemePrefs.offenseScheme && OFFENSE_COMPATIBLE[schemePrefs.offenseScheme]) {
+    q = q.in('offense_scheme', OFFENSE_COMPATIBLE[schemePrefs.offenseScheme]);
+  }
+  if (schemePrefs.defenseScheme && DEFENSE_COMPATIBLE[schemePrefs.defenseScheme]) {
+    q = q.in('defense_scheme', DEFENSE_COMPATIBLE[schemePrefs.defenseScheme]);
   }
 
   // Exclude already-claimed schools in this league
@@ -348,9 +394,13 @@ async function runListTeamsDisplay(league) {
         const claim = claimedMap[school.id];
         if (claim) {
           const roleLabel = claim.role ? ` (${claim.role})` : '';
-          text += `🏈 **${school.name}** — <@${claim.taken_by}>${roleLabel}\n`;
+          const schemeLabel = (school.offense_scheme || school.defense_scheme)
+            ? ` | ${school.offense_scheme || '?'} / ${school.defense_scheme || '?'}` : '';
+          text += `🏈 **${school.name}**${schemeLabel} — <@${claim.taken_by}>${roleLabel}\n`;
         } else {
-          text += `🟢 **${school.name}** — Available\n`;
+          const schemeLabel = (school.offense_scheme || school.defense_scheme)
+            ? ` | ${school.offense_scheme || '?'} / ${school.defense_scheme || '?'}` : '';
+          text += `🟢 **${school.name}**${schemeLabel} — Available\n`;
         }
       }
     }
@@ -373,19 +423,86 @@ async function runListTeamsDisplay(league) {
 }
 
 // ---------------------------------------------------------
-// SEND JOB OFFERS DM
+// JOB OFFER FLOW
+// Handles the multi-step DM conversation: role → schemes → team pick
 // ---------------------------------------------------------
-async function sendJobOffersToUser(user, guildId, count = 5) {
+
+// Called on ✅ reaction or /joboffers to kick off the flow.
+async function startOfferFlow(user, guildId) {
   const league = await getLeague(guildId);
   if (!league) throw new Error('This server has not been configured yet. An admin must run /setup first.');
 
-  const offers = await getAvailableSchools(league, count);
-  if (!offers || offers.length === 0) return [];
-
   if (!client.userOffers) client.userOffers = {};
-  client.userOffers[user.id] = { guildId, teams: offers, step: 'choose_team', chosenTeam: null };
+  client.userOffers[user.id] = {
+    guildId,
+    step: null,
+    teams: [],
+    chosenTeam: null,
+    role: null,
+    preferredOffenseScheme: null,
+    preferredDefenseScheme: null
+  };
 
-  // Build DM grouped by conference with sequential numbers
+  await advanceOfferFlow(user, league, client.userOffers[user.id]);
+  return true;
+}
+
+// Sends the next prompt in the flow based on what info is still missing.
+async function advanceOfferFlow(user, league, offerData) {
+  const roles = (league.allowed_roles || 'HC').split(',').map(r => r.trim());
+
+  // Assign role automatically when only one is configured
+  if (!offerData.role && roles.length === 1) offerData.role = roles[0];
+
+  // Step: ask for role (only when multiple are available and scheme filter is on,
+  // so we know which scheme questions to ask)
+  if (!offerData.role && league.scheme_filter) {
+    offerData.step = 'choose_role';
+    await user.send(
+      `Welcome! Before we show you available schools, what role are you applying for?\n` +
+      `Reply with one of: **${roles.join(', ')}**`
+    );
+    return;
+  }
+
+  const role = offerData.role || roles[0];
+
+  // Step: ask for preferred offensive scheme (HC or OC, scheme filter on)
+  if (league.scheme_filter && (role === 'HC' || role === 'OC') && !offerData.preferredOffenseScheme) {
+    offerData.step = 'choose_offense_scheme';
+    const list = OFFENSE_SCHEMES.map((s, i) => `${i + 1}. ${s}`).join('\n');
+    await user.send(`What is your preferred **offensive** scheme?\nReply with the number:\n${list}`);
+    return;
+  }
+
+  // Step: ask for preferred defensive scheme (HC or DC, scheme filter on)
+  if (league.scheme_filter && (role === 'HC' || role === 'DC') && !offerData.preferredDefenseScheme) {
+    offerData.step = 'choose_defense_scheme';
+    const list = DEFENSE_SCHEMES.map((s, i) => `${i + 1}. ${s}`).join('\n');
+    await user.send(`What is your preferred **defensive** scheme?\nReply with the number:\n${list}`);
+    return;
+  }
+
+  // All preferences collected — fetch and send filtered offers
+  const schemePrefs = {
+    offenseScheme: offerData.preferredOffenseScheme,
+    defenseScheme: offerData.preferredDefenseScheme
+  };
+
+  const offers = await getAvailableSchools(league, 5, schemePrefs);
+
+  if (!offers || offers.length === 0) {
+    delete client.userOffers[user.id];
+    jobOfferUsed.delete(user.id);
+    const schemeNote = (schemePrefs.offenseScheme || schemePrefs.defenseScheme)
+      ? ' that match your scheme preferences' : '';
+    await user.send(`No available schools${schemeNote} right now. Contact a league admin.`);
+    return;
+  }
+
+  offerData.teams = offers;
+  offerData.step = 'choose_team';
+
   let dmText = 'Your Headset Dynasty job offers:\n\n';
   const grouped = {};
   for (let idx = 0; idx < offers.length; idx++) {
@@ -397,14 +514,15 @@ async function sendJobOffersToUser(user, guildId, count = 5) {
   for (const conf of Object.keys(grouped)) {
     dmText += `**${conf}**\n`;
     for (const item of grouped[conf]) {
-      dmText += `${item.number}️⃣ ${item.school.name}\n`;
+      const schemes = (item.school.offense_scheme || item.school.defense_scheme)
+        ? ` (${item.school.offense_scheme || '?'} / ${item.school.defense_scheme || '?'})` : '';
+      dmText += `${item.number}️⃣ ${item.school.name}${schemes}\n`;
     }
     dmText += '\n';
   }
   dmText += 'Reply with the number of the team you want to accept.';
 
   await user.send(dmText);
-  return offers;
 }
 
 // ---------------------------------------------------------
@@ -435,7 +553,9 @@ async function claimTeam(msg, offerData, school, role) {
     school_id: school.id,
     taken_by: userId,
     taken_by_name: msg.author.username,
-    role
+    role,
+    preferred_offense_scheme: offerData.preferredOffenseScheme || null,
+    preferred_defense_scheme: offerData.preferredDefenseScheme || null
   });
 
   if (insertErr) {
@@ -649,6 +769,8 @@ client.on('interactionCreate', async interaction => {
         coachRole = await guild.roles.create({ name: 'coach', reason: 'Dynasty bot setup' });
       }
 
+      const schemeFilter = interaction.options.getBoolean('scheme_filter') ?? false;
+
       const { error } = await supabase.from('leagues').upsert({
         guild_id: interaction.guildId,
         name: guild.name,
@@ -659,7 +781,8 @@ client.on('interactionCreate', async interaction => {
         allowed_roles: allowedRoles,
         allowed_conferences: allowedConferences,
         min_stars: minStars ?? 0.0,
-        max_stars: maxStars ?? 5.0
+        max_stars: maxStars ?? 5.0,
+        scheme_filter: schemeFilter
       }, { onConflict: 'guild_id' });
 
       if (error) return interaction.editReply(`Setup failed: ${error.message}`);
@@ -682,7 +805,8 @@ client.on('interactionCreate', async interaction => {
         `- Coach role: ${coachRole}\n` +
         `- Allowed roles: **${allowedRoles}**\n` +
         `- Conferences: **${confDisplay}**\n` +
-        `- Stars range: **${minStars ?? 0.0}–${maxStars ?? 5.0}**`
+        `- Stars range: **${minStars ?? 0.0}–${maxStars ?? 5.0}**\n` +
+        `- Scheme filtering: **${schemeFilter ? 'On' : 'Off'}**`
       );
     }
 
@@ -737,21 +861,15 @@ client.on('interactionCreate', async interaction => {
       }
       jobOfferUsed.add(targetUser.id);
 
-      let offers;
       try {
-        offers = await sendJobOffersToUser(targetUser, interaction.guildId, 5);
+        await startOfferFlow(targetUser, interaction.guildId);
       } catch (err) {
-        console.error('Failed to fetch/send offers:', err);
+        console.error('Failed to start offer flow:', err);
         jobOfferUsed.delete(targetUser.id);
-        return interaction.reply({ ephemeral: true, content: `Error fetching offers: ${err.message}` });
+        return interaction.reply({ ephemeral: true, content: `Error: ${err.message}` });
       }
 
-      if (!offers || offers.length === 0) {
-        jobOfferUsed.delete(targetUser.id);
-        return interaction.reply({ ephemeral: true, content: 'No available schools match this league\'s filters.' });
-      }
-
-      return interaction.reply({ ephemeral: true, content: `✅ Job offers sent to **${targetUser.username}** via DM.` });
+      return interaction.reply({ ephemeral: true, content: `✅ Job offer flow started for **${targetUser.username}** via DM.` });
     }
 
     // ---------------------------
@@ -1583,15 +1701,11 @@ client.on('messageReactionAdd', async (reaction, user) => {
     jobOfferUsed.add(user.id);
 
     try {
-      const offers = await sendJobOffersToUser(user, guildId, 5);
-      if (!offers || offers.length === 0) {
-        jobOfferUsed.delete(user.id);
-        try { await user.send('No teams available right now. Contact a league admin.'); } catch {}
-      }
+      await startOfferFlow(user, guildId);
     } catch (err) {
-      console.error('sendJobOffersToUser error:', err);
+      console.error('startOfferFlow error:', err);
       jobOfferUsed.delete(user.id);
-      try { await user.send(`Error fetching offers: ${err.message}`); } catch {}
+      try { await user.send(`Error starting job offers: ${err.message}`); } catch {}
     }
   } catch (err) {
     console.error('messageReactionAdd error:', err);
@@ -1600,9 +1714,12 @@ client.on('messageReactionAdd', async (reaction, user) => {
 
 // ---------------------------------------------------------
 // DM ACCEPT OFFER (user replies to bot DM)
-// Two-step flow when multiple roles are available:
-//   Step 1: user replies with team number (1-5)
-//   Step 2: user replies with role (HC / OC / DC) — only if league allows multiple
+// Full flow (steps vary by league config):
+//   choose_role           — ask HC/OC/DC (only when scheme_filter on + multiple roles)
+//   choose_offense_scheme — ask offensive scheme (HC or OC, scheme_filter on)
+//   choose_defense_scheme — ask defensive scheme (HC or DC, scheme_filter on)
+//   choose_team           — show filtered offers, user picks number 1-N
+//   (role may also be asked after team pick when scheme_filter is off + multiple roles)
 // ---------------------------------------------------------
 client.on('messageCreate', async msg => {
   try {
@@ -1612,8 +1729,46 @@ client.on('messageCreate', async msg => {
     if (!client.userOffers || !client.userOffers[userId]) return;
 
     const offerData = client.userOffers[userId];
+    const league = await getLeague(offerData.guildId);
+    if (!league) return msg.reply('League configuration not found. Contact an admin.');
 
-    // Step 1: pick a team number
+    // Role selection (pre-offer, only when scheme_filter is on)
+    if (offerData.step === 'choose_role') {
+      const roles = (league.allowed_roles || 'HC').split(',').map(r => r.trim().toUpperCase());
+      const input = msg.content.trim().toUpperCase();
+      if (!roles.includes(input)) {
+        return msg.reply(`Invalid role. Reply with one of: **${roles.join(', ')}**`);
+      }
+      offerData.role = input;
+      await advanceOfferFlow(msg.author, league, offerData);
+      return;
+    }
+
+    // Offensive scheme selection
+    if (offerData.step === 'choose_offense_scheme') {
+      const choice = parseInt(msg.content.trim());
+      if (isNaN(choice) || choice < 1 || choice > OFFENSE_SCHEMES.length) {
+        return msg.reply(`Reply with a number between 1 and ${OFFENSE_SCHEMES.length}.`);
+      }
+      offerData.preferredOffenseScheme = OFFENSE_SCHEMES[choice - 1];
+      await msg.reply(`Got it — **${offerData.preferredOffenseScheme}** offense.`);
+      await advanceOfferFlow(msg.author, league, offerData);
+      return;
+    }
+
+    // Defensive scheme selection
+    if (offerData.step === 'choose_defense_scheme') {
+      const choice = parseInt(msg.content.trim());
+      if (isNaN(choice) || choice < 1 || choice > DEFENSE_SCHEMES.length) {
+        return msg.reply(`Reply with a number between 1 and ${DEFENSE_SCHEMES.length}.`);
+      }
+      offerData.preferredDefenseScheme = DEFENSE_SCHEMES[choice - 1];
+      await msg.reply(`Got it — **${offerData.preferredDefenseScheme}** defense.`);
+      await advanceOfferFlow(msg.author, league, offerData);
+      return;
+    }
+
+    // Team selection
     if (offerData.step === 'choose_team') {
       const offers = offerData.teams;
       const choice = parseInt(msg.content.trim());
@@ -1624,39 +1779,36 @@ client.on('messageCreate', async msg => {
       const school = offers[choice - 1];
       offerData.chosenTeam = school;
 
-      const league = await getLeague(offerData.guildId);
-      if (!league) return msg.reply('League configuration not found. Contact an admin.');
-
-      const roles = (league.allowed_roles || 'HC').split(',').map(r => r.trim()).filter(Boolean);
-
-      if (roles.length === 1) {
-        // Single role configured — claim immediately without asking
-        await claimTeam(msg, offerData, school, roles[0]);
-      } else {
-        // Multiple roles — ask which one
-        offerData.step = 'choose_role';
-        await msg.reply(`You selected **${school.name}**! What role would you like?\nReply with one of: **${roles.join(', ')}**`);
+      // If role not set yet (scheme_filter off + multiple roles), ask now
+      if (!offerData.role) {
+        const roles = (league.allowed_roles || 'HC').split(',').map(r => r.trim()).filter(Boolean);
+        if (roles.length === 1) {
+          offerData.role = roles[0];
+          await claimTeam(msg, offerData, school, offerData.role);
+        } else {
+          offerData.step = 'choose_role_after_team';
+          await msg.reply(`You selected **${school.name}**! What role would you like?\nReply with one of: **${roles.join(', ')}**`);
+        }
+        return;
       }
+
+      await claimTeam(msg, offerData, school, offerData.role);
       return;
     }
 
-    // Step 2: pick a role
-    if (offerData.step === 'choose_role') {
-      const league = await getLeague(offerData.guildId);
-      if (!league) return msg.reply('League configuration not found. Contact an admin.');
-
-      const roles = (league.allowed_roles || 'HC').split(',').map(r => r.trim().toUpperCase()).filter(Boolean);
+    // Role selection (post-offer, only when scheme_filter is off + multiple roles)
+    if (offerData.step === 'choose_role_after_team') {
+      const roles = (league.allowed_roles || 'HC').split(',').map(r => r.trim().toUpperCase());
       const input = msg.content.trim().toUpperCase();
-
       if (!roles.includes(input)) {
-        return msg.reply(`Invalid role. Please reply with one of: **${roles.join(', ')}**`);
+        return msg.reply(`Invalid role. Reply with one of: **${roles.join(', ')}**`);
       }
-
+      offerData.role = input;
       await claimTeam(msg, offerData, offerData.chosenTeam, input);
     }
   } catch (err) {
     console.error('DM accept offer error:', err);
-    try { await msg.reply('An error occurred processing your request. Please contact an admin.'); } catch {}
+    try { await msg.reply('An error occurred. Please contact an admin.'); } catch {}
   }
 });
 

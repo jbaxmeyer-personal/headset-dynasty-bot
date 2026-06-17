@@ -34,6 +34,10 @@ const commands = [
       .setMinValue(0)
       .setMaxValue(5)
       .setRequired(false))
+    .addBooleanOption(o => o
+      .setName('scheme_filter')
+      .setDescription('Filter job offers by coaching scheme compatibility? (default: No)')
+      .setRequired(false))
     .addChannelOption(o => o
       .setName('general')
       .setDescription('Use an existing #general channel instead of creating one')

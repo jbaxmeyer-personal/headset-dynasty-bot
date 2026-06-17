@@ -1,17 +1,18 @@
--- CFB27 Multi-Server Migration
--- Run these statements in the Supabase SQL Editor in order.
--- The old tables (teams, results, records, news_feed, meta) are left intact
--- so commented-out features can be re-enabled later.
+-- CFB27 Multi-Server Migration (v2 — scheme support)
+-- Run all statements in the Supabase SQL Editor in order.
+-- Safe to run multiple times (uses IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
 
--- Step 1: Reference table for all CFB schools (shared across all leagues)
+-- ================================================================
+-- v1 tables (skip if already run)
+-- ================================================================
+
 CREATE TABLE IF NOT EXISTS schools (
   id          SERIAL PRIMARY KEY,
   name        TEXT NOT NULL,
   conference  TEXT,
-  stars       NUMERIC(2,1)   -- 0.0-5.0
+  stars       NUMERIC(2,1)
 );
 
--- Step 2: One row per Discord server
 CREATE TABLE IF NOT EXISTS leagues (
   id                      SERIAL PRIMARY KEY,
   guild_id                TEXT NOT NULL UNIQUE,
@@ -20,27 +21,54 @@ CREATE TABLE IF NOT EXISTS leagues (
   rules_channel_id        TEXT,
   team_list_channel_id    TEXT,
   coach_role_id           TEXT,
-  allowed_roles           TEXT DEFAULT 'HC',    -- 'HC' | 'OC,DC' | 'HC,OC,DC'
-  allowed_conferences     TEXT,                 -- NULL = all; comma-separated e.g. 'SEC,Big Ten'
+  allowed_roles           TEXT DEFAULT 'HC',
+  allowed_conferences     TEXT,
   min_stars               NUMERIC(2,1) DEFAULT 0.0,
   max_stars               NUMERIC(2,1) DEFAULT 5.0
 );
 
--- Step 3: Schools available per league + who has claimed them
--- Only claimed schools have rows here; available schools are queried live from `schools`.
 CREATE TABLE IF NOT EXISTS league_teams (
   id            SERIAL PRIMARY KEY,
   league_id     INTEGER NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
   school_id     INTEGER NOT NULL REFERENCES schools(id),
   taken_by      TEXT NOT NULL,
   taken_by_name TEXT,
-  role          TEXT NOT NULL DEFAULT 'HC',    -- 'HC', 'OC', or 'DC'
+  role          TEXT NOT NULL DEFAULT 'HC',
   channel_id    TEXT,
-  UNIQUE(league_id, school_id)                -- one coach per school per league
+  UNIQUE(league_id, school_id)
 );
 
--- Step 4: Populate schools from the existing teams table (one-time migration)
+-- One-time: populate schools from old teams table (skip if already done)
 INSERT INTO schools (name, conference, stars)
-SELECT name, conference, stars
-FROM teams
+SELECT name, conference, stars FROM teams
 ON CONFLICT DO NOTHING;
+
+-- ================================================================
+-- v2 additions — scheme support
+-- ================================================================
+
+-- Add scheme columns to schools
+ALTER TABLE schools ADD COLUMN IF NOT EXISTS offense_scheme TEXT;
+ALTER TABLE schools ADD COLUMN IF NOT EXISTS defense_scheme TEXT;
+
+-- Add scheme filter toggle to leagues
+ALTER TABLE leagues ADD COLUMN IF NOT EXISTS scheme_filter BOOLEAN DEFAULT FALSE;
+
+-- Add preferred scheme columns to league_teams
+ALTER TABLE league_teams ADD COLUMN IF NOT EXISTS preferred_offense_scheme TEXT;
+ALTER TABLE league_teams ADD COLUMN IF NOT EXISTS preferred_defense_scheme TEXT;
+
+-- ================================================================
+-- Reference: CFB27 offensive schemes
+-- ================================================================
+-- Option, Spread, Veer and Shoot, Air Raid,
+-- Pro Style, Power Spread, Run and Shoot, Pistol, Multiple
+
+-- ================================================================
+-- Reference: CFB27 defensive schemes
+-- ================================================================
+-- 3-2-6, 3-3-5, 3-3-5 Tite, 3-4,
+-- 3-4 Multiple, 4-2-5, 4-3, 4-3 Multiple, Multiple
+
+-- After running this migration, populate offense_scheme and defense_scheme
+-- on each row in the schools table with the correct CFB27 values.
