@@ -483,13 +483,9 @@ async function runListTeamsDisplay(league) {
         const claim = claimedMap[school.id];
         if (claim) {
           const roleLabel = claim.role ? ` (${claim.role})` : '';
-          const schemeLabel = (school.offense_scheme || school.defense_scheme)
-            ? ` | ${school.offense_scheme || '?'} / ${school.defense_scheme || '?'}` : '';
-          text += `🏈 **${school.name}**${schemeLabel} — <@${claim.taken_by}>${roleLabel}\n`;
+          text += `🏈 **${school.name}** — <@${claim.taken_by}>${roleLabel}\n`;
         } else {
-          const schemeLabel = (school.offense_scheme || school.defense_scheme)
-            ? ` | ${school.offense_scheme || '?'} / ${school.defense_scheme || '?'}` : '';
-          text += `🟢 **${school.name}**${schemeLabel} — Available\n`;
+          text += `🟢 **${school.name}** — Available\n`;
         }
       }
     }
