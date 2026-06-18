@@ -772,8 +772,7 @@ client.on('interactionCreate', async interaction => {
       const schemeFilter = interaction.options.getBoolean('scheme_filter') ?? false;
       const offerCount = interaction.options.getInteger('offer_count') ?? 5;
 
-      const { error } = await supabase.from('leagues').upsert({
-        guild_id: interaction.guildId,
+      const payload = {
         name: guild.name,
         general_channel_id: general.id,
         rules_channel_id: rules.id,
@@ -785,7 +784,12 @@ client.on('interactionCreate', async interaction => {
         max_stars: maxStars ?? 5.0,
         scheme_filter: schemeFilter,
         offer_count: offerCount
-      }, { onConflict: 'guild_id' });
+      };
+
+      const { data: existing } = await supabase.from('leagues').select('id').eq('guild_id', interaction.guildId).maybeSingle();
+      const { error } = existing
+        ? await supabase.from('leagues').update(payload).eq('guild_id', interaction.guildId)
+        : await supabase.from('leagues').insert({ guild_id: interaction.guildId, ...payload });
 
       if (error) { console.error('Setup Supabase error:', JSON.stringify(error, null, 2)); return interaction.editReply(`Setup failed: ${error.message}`); }
 
