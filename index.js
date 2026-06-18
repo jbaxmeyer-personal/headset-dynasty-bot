@@ -354,7 +354,6 @@ async function getConferencesForDropdown() {
 
 function buildSetupComponents(cfg, conferences) {
   const selectedConfs = cfg.allowedConferences ? cfg.allowedConferences.split(',').map(c => c.trim()) : [];
-  const starKey = `${cfg.minStars}-${cfg.maxStars}`;
 
   const rolesMenu = new StringSelectMenuBuilder()
     .setCustomId('setup_roles')
@@ -377,9 +376,14 @@ function buildSetupComponents(cfg, conferences) {
 
   const starsMenu = new StringSelectMenuBuilder()
     .setCustomId('setup_star_range')
-    .setPlaceholder('School prestige range')
-    .addOptions(STAR_PRESETS.map(p =>
-      new StringSelectMenuOptionBuilder().setLabel(p.label).setValue(p.value).setDescription(p.description).setDefault(starKey === p.value)
+    .setPlaceholder('Select min & max prestige — lowest and highest selected set the range')
+    .setMinValues(1)
+    .setMaxValues(STAR_VALUES.length)
+    .addOptions(STAR_VALUES.map(v =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`${v} ⭐`)
+        .setValue(String(v))
+        .setDefault(v === cfg.minStars || v === cfg.maxStars)
     ));
 
   const offerMenu = new StringSelectMenuBuilder()
@@ -846,9 +850,9 @@ client.on('interactionCreate', async interaction => {
       } else if (interaction.customId === 'setup_conferences') {
         updatePayload.allowed_conferences = interaction.values.length > 0 ? interaction.values.join(',') : null;
       } else if (interaction.customId === 'setup_star_range') {
-        const [min, max] = interaction.values[0].split('-').map(parseFloat);
-        updatePayload.min_stars = min;
-        updatePayload.max_stars = max;
+        const vals = interaction.values.map(parseFloat);
+        updatePayload.min_stars = Math.min(...vals);
+        updatePayload.max_stars = Math.max(...vals);
       } else if (interaction.customId === 'setup_offer_count') {
         updatePayload.offer_count = parseInt(interaction.values[0]);
       } else if (interaction.customId === 'setup_scheme') {
