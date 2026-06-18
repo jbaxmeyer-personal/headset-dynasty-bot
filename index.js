@@ -72,9 +72,6 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
-// soft-lock: prevents duplicate job offer sends per bot session; keyed as "guildId:userId"
-const jobOfferUsed = new Set();
-if (!globalThis.jobOfferUsedGlobal) globalThis.jobOfferUsedGlobal = jobOfferUsed;
 
 /* ---------------------------------------------------------
  * INLINE GUILD COMMAND REGISTRATION (commented out)
@@ -602,7 +599,6 @@ async function advanceOfferFlow(user, league, offerData) {
 
   if (!offers || offers.length === 0) {
     delete client.userOffers[user.id];
-    jobOfferUsed.delete(user.id);
     const schemeNote = (schemePrefs.offenseScheme || schemePrefs.defenseScheme)
       ? ' that match your scheme preferences' : '';
     await user.send(`No available schools${schemeNote} right now. Contact a league admin.`);
@@ -652,7 +648,6 @@ async function claimTeam(msg, offerData, school, role) {
 
   if (existingClaim) {
     delete client.userOffers[userId];
-    jobOfferUsed.delete(userId);
     return msg.reply(`**${school.name}** was just claimed by someone else. Contact an admin to get new offers.`);
   }
 
@@ -980,16 +975,14 @@ client.on('interactionCreate', async interaction => {
     if (name === 'joboffers') {
       const targetUser = interaction.options.getUser('user');
 
-      if (jobOfferUsed.has(targetUser.id)) {
-        return interaction.reply({ ephemeral: true, content: `⛔ ${targetUser.username} already has pending or accepted job offers.` });
+      if (client.userOffers && client.userOffers[targetUser.id] && client.userOffers[targetUser.id].guildId === interaction.guildId) {
+        return interaction.reply({ ephemeral: true, content: `⛔ ${targetUser.username} already has a pending offer flow in progress.` });
       }
-      jobOfferUsed.add(targetUser.id);
 
       try {
         await startOfferFlow(targetUser, interaction.guildId);
       } catch (err) {
         console.error('Failed to start offer flow:', err);
-        jobOfferUsed.delete(targetUser.id);
         return interaction.reply({ ephemeral: true, content: `Error: ${err.message}` });
       }
 
@@ -1021,8 +1014,7 @@ client.on('interactionCreate', async interaction => {
       const schoolName = teamData.schools?.name || 'their team';
 
       await supabase.from('league_teams').delete().eq('id', teamData.id);
-      jobOfferUsed.delete(userId);
-
+  
       // Delete team channel by stored ID
       if (teamData.channel_id) {
         const ch = await interaction.guild.channels.fetch(teamData.channel_id).catch(() => null);
@@ -1783,7 +1775,6 @@ client.on('guildMemberRemove', async (member) => {
     console.log(`User ${userId} left. Resetting ${schoolName}...`);
 
     await supabase.from('league_teams').delete().eq('id', teamData.id);
-    jobOfferUsed.delete(userId);
 
     if (teamData.channel_id) {
       const ch = await member.guild.channels.fetch(teamData.channel_id).catch(() => null);
@@ -1817,20 +1808,16 @@ client.on('messageReactionAdd', async (reaction, user) => {
     // Only trigger in the configured rules channel
     if (reaction.message.channelId !== league.rules_channel_id) return;
 
-    const offerKey = `${guildId}:${user.id}`;
-    if (jobOfferUsed.has(offerKey)) {
-      try { await user.send("⛔ You've already received your job offers for this league."); } catch {}
+    // Block if already has an active offer flow for this league
+    if (client.userOffers && client.userOffers[user.id] && client.userOffers[user.id].guildId === guildId) {
+      try { await user.send("You already have pending job offers — reply to my previous DM to continue."); } catch {}
       return;
     }
 
-    jobOfferUsed.add(offerKey);
-
     try {
-      const started = await startOfferFlow(user, guildId);
-      if (!started) jobOfferUsed.delete(offerKey);
+      await startOfferFlow(user, guildId);
     } catch (err) {
       console.error('startOfferFlow error:', err);
-      jobOfferUsed.delete(offerKey);
       try { await user.send(`Error starting job offers: ${err.message}`); } catch {}
     }
   } catch (err) {
