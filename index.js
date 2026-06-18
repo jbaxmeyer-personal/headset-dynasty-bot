@@ -874,20 +874,32 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({
         ephemeral: true,
         content:
-          `## Headset Dynasty Bot\n` +
-          `This bot manages CFB27 online dynasty leagues — it sends job offer DMs to users and handles team assignments.\n\n` +
-          `**Admin setup (run once):**\n` +
-          `\`/setup\` — Configure this server. The bot will auto-create #general, #rules, #team-list, and a @coach role. ` +
-          `Add optional filters: \`allowed_roles\`, \`conferences\`, \`min_stars\`, \`max_stars\`.\n\n` +
+          `## Headset Dynasty Bot — Setup Guide\n\n` +
+          `**Step 1: Run \`/setup\`**\n` +
+          `A form will pop up. Fill it out:\n` +
+          `- **Coaching Roles** — which roles coaches can hold: \`HC\`, \`OC,DC\`, or \`HC,OC,DC\`\n` +
+          `- **Conferences** — limit schools by conference (e.g. \`SEC,Big Ten\`), or leave blank for all\n` +
+          `- **Star Range** — school prestige filter (e.g. \`0-5\` for all, \`1-3\` for mid-tier only)\n` +
+          `- **Scheme Filtering** — \`yes\` to only offer schools that match a coach's scheme preference, \`no\` to skip\n` +
+          `- **Offer Count** — how many job offers each user receives (1–5)\n\n` +
+          `The bot auto-creates: **#general**, **#rules**, **#team-list**, and a **@coach** role.\n\n` +
+          `**Step 2: Post a message in #rules**\n` +
+          `Tell your members to react ✅ to a pinned message in #rules to get job offers. ` +
+          `When someone reacts, the bot DMs them their job offers automatically.\n\n` +
+          `**How the offer flow works:**\n` +
+          `1. User reacts ✅ in #rules\n` +
+          `2. Bot DMs them a list of available schools\n` +
+          `3. User replies with a number (1–5) to pick their school\n` +
+          `4. If multiple roles are enabled, bot asks which role they want\n` +
+          `5. Bot assigns nickname, creates a private team channel, gives @coach role, and announces in #general\n\n` +
           `**Admin commands:**\n` +
-          `\`/joboffers @user\` — Send a user 5 job offer DMs from available schools\n` +
-          `\`/resetteam @user\` — Remove a coach: deletes their team channel, removes @coach role, clears nickname\n` +
+          `\`/setup\` — Run again anytime to update league settings\n` +
+          `\`/joboffers @user\` — Manually send job offers to a specific user\n` +
+          `\`/resetteam @user\` — Remove a coach (deletes channel, clears nickname, removes @coach role)\n` +
           `\`/move-coach @user\` — Move a coach to a different school\n` +
           `\`/listteams\` — Refresh the #team-list channel\n\n` +
-          `**How users join:**\n` +
-          `React ✅ in #rules → bot sends 5 job offers via DM → user replies with a number to accept.\n\n` +
           `**Want to add this bot to your server?**\n` +
-          `Use \`/invite\` to get the invite link.`
+          `Use \`/invite\` to get the link.`
       });
     }
 
