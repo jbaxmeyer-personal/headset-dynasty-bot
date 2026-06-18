@@ -339,14 +339,7 @@ async function getAvailableSchools(league, count, schemePrefs = {}) {
 // SETUP UI HELPERS
 // Builds the ephemeral dropdown panel for /setup.
 // ---------------------------------------------------------
-const STAR_PRESETS = [
-  { label: 'All programs (0–5 ⭐)', value: '0-5', description: 'No prestige filter — all schools included' },
-  { label: 'Low prestige (0–2 ⭐)', value: '0-2', description: 'Rebuilding and low-major programs only' },
-  { label: 'Mid prestige (1–3 ⭐)', value: '1-3', description: 'Mid-major and smaller conference programs' },
-  { label: 'Upper mid (2–4 ⭐)', value: '2-4', description: 'Solid programs, no bottom or top tier' },
-  { label: 'High prestige (3–5 ⭐)', value: '3-5', description: 'Power program jobs only' },
-  { label: 'Elite only (4–5 ⭐)', value: '4-5', description: 'Top-tier blue blood programs only' },
-];
+const STAR_VALUES = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 
 const CFB_CONFERENCES_FALLBACK = [
   'SEC','Big Ten','ACC','Big 12','Pac-12',
