@@ -1081,20 +1081,21 @@ client.on('interactionCreate', async interaction => {
     // /joboffers (admin sends to a specific user)
     // ---------------------------
     if (name === 'joboffers') {
+      await interaction.deferReply({ ephemeral: true });
       const targetUser = interaction.options.getUser('user');
 
       if (client.userOffers && client.userOffers[targetUser.id] && client.userOffers[targetUser.id].guildId === interaction.guildId) {
-        return interaction.reply({ ephemeral: true, content: `⛔ ${targetUser.username} already has a pending offer flow in progress.` });
+        return interaction.editReply(`⛔ ${targetUser.username} already has a pending offer flow in progress.`);
       }
 
       try {
         await startOfferFlow(targetUser, interaction.guildId);
       } catch (err) {
         console.error('Failed to start offer flow:', err);
-        return interaction.reply({ ephemeral: true, content: `Error: ${err.message}` });
+        return interaction.editReply(`Error: ${err.message}`);
       }
 
-      return interaction.reply({ ephemeral: true, content: `✅ Job offer flow started for **${targetUser.username}** via DM.` });
+      return interaction.editReply(`✅ Job offer flow started for **${targetUser.username}** via DM.`);
     }
 
     // ---------------------------
