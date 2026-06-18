@@ -50,7 +50,11 @@ const {
   GatewayIntentBits,
   ChannelType,
   PermissionFlagsBits,
-  Partials
+  Partials,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder
 } = require('discord.js');
 
 const { createClient } = require('@supabase/supabase-js');
@@ -722,55 +726,48 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    if (!interaction.isCommand()) return;
-    const name = interaction.commandName;
-
     // ---------------------------
-    // /setup
+    // /setup modal submission
     // ---------------------------
-    if (name === 'setup') {
+    if (interaction.isModalSubmit && interaction.isModalSubmit() && interaction.customId === 'setup_modal') {
       await interaction.deferReply({ ephemeral: true });
 
       const guild = interaction.guild;
-      const allowedRoles = interaction.options.getString('allowed_roles') ?? 'HC';
-      const conferencesRaw = interaction.options.getString('conferences');
-      const minStars = interaction.options.getNumber('min_stars');
-      const maxStars = interaction.options.getNumber('max_stars');
+      const allowedRoles = interaction.fields.getTextInputValue('allowed_roles').trim().toUpperCase().replace(/\s/g, '');
+      const conferencesRaw = interaction.fields.getTextInputValue('conferences').trim();
+      const starsRaw = interaction.fields.getTextInputValue('stars_range').trim();
+      const schemeFilterRaw = interaction.fields.getTextInputValue('scheme_filter').trim().toLowerCase();
+      const offerCountRaw = interaction.fields.getTextInputValue('offer_count').trim();
 
+      const validRoles = ['HC', 'OC,DC', 'HC,OC,DC'];
+      if (!validRoles.includes(allowedRoles)) {
+        return interaction.editReply('Invalid roles. Enter exactly: `HC`, `OC,DC`, or `HC,OC,DC`');
+      }
+
+      const [minStr, maxStr] = starsRaw.split('-');
+      const minStars = parseFloat(minStr);
+      const maxStars = parseFloat(maxStr);
+      if (isNaN(minStars) || isNaN(maxStars) || minStars < 0 || maxStars > 5 || minStars > maxStars) {
+        return interaction.editReply('Invalid star range. Use format `MIN-MAX` e.g. `0-5` or `1-3`.');
+      }
+
+      const schemeFilter = schemeFilterRaw === 'yes' || schemeFilterRaw === 'y';
+      const offerCount = Math.min(5, Math.max(1, parseInt(offerCountRaw) || 5));
       const allowedConferences = (conferencesRaw && conferencesRaw.toUpperCase() !== 'ALL')
         ? conferencesRaw.split(',').map(c => c.trim()).filter(Boolean).join(',')
         : null;
 
-      // Find or create #general
-      let general = interaction.options.getChannel('general')
-        || guild.channels.cache.find(c => c.name === 'general' && c.isTextBased());
-      if (!general) {
-        general = await guild.channels.create({ name: 'general', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
-      }
+      let general = guild.channels.cache.find(c => c.name === 'general' && c.isTextBased());
+      if (!general) general = await guild.channels.create({ name: 'general', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
 
-      // Find or create #rules
-      let rules = interaction.options.getChannel('rules')
-        || guild.channels.cache.find(c => c.name === 'rules' && c.isTextBased());
-      if (!rules) {
-        rules = await guild.channels.create({ name: 'rules', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
-      }
+      let rules = guild.channels.cache.find(c => c.name === 'rules' && c.isTextBased());
+      if (!rules) rules = await guild.channels.create({ name: 'rules', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
 
-      // Find or create #team-list
-      let teamList = interaction.options.getChannel('team_list')
-        || guild.channels.cache.find(c => c.name === 'team-list' && c.isTextBased());
-      if (!teamList) {
-        teamList = await guild.channels.create({ name: 'team-list', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
-      }
+      let teamList = guild.channels.cache.find(c => c.name === 'team-list' && c.isTextBased());
+      if (!teamList) teamList = await guild.channels.create({ name: 'team-list', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
 
-      // Find or create 'coach' role
-      let coachRole = interaction.options.getRole('coach_role')
-        || guild.roles.cache.find(r => r.name === 'coach');
-      if (!coachRole) {
-        coachRole = await guild.roles.create({ name: 'coach', reason: 'Dynasty bot setup' });
-      }
-
-      const schemeFilter = interaction.options.getBoolean('scheme_filter') ?? false;
-      const offerCount = interaction.options.getInteger('offer_count') ?? 5;
+      let coachRole = guild.roles.cache.find(r => r.name === 'coach');
+      if (!coachRole) coachRole = await guild.roles.create({ name: 'coach', reason: 'Dynasty bot setup' });
 
       const payload = {
         name: guild.name,
@@ -780,8 +777,8 @@ client.on('interactionCreate', async interaction => {
         coach_role_id: coachRole.id,
         allowed_roles: allowedRoles,
         allowed_conferences: allowedConferences,
-        min_stars: minStars ?? 0.0,
-        max_stars: maxStars ?? 5.0,
+        min_stars: minStars,
+        max_stars: maxStars,
         scheme_filter: schemeFilter,
         offer_count: offerCount
       };
@@ -796,25 +793,78 @@ client.on('interactionCreate', async interaction => {
       invalidateLeagueCache(interaction.guildId);
 
       const confDisplay = allowedConferences || 'All conferences';
-      const created = [];
-      if (!interaction.options.getChannel('general') && general) created.push('#general');
-      if (!interaction.options.getChannel('rules') && rules) created.push('#rules');
-      if (!interaction.options.getChannel('team_list') && teamList) created.push('#team-list');
-      if (!interaction.options.getRole('coach_role') && coachRole) created.push('@coach role');
-
       return interaction.editReply(
         `✅ League configured!\n` +
-        (created.length ? `- Created: ${created.join(', ')}\n` : '') +
         `- General: ${general}\n` +
         `- Rules: ${rules} — users react ✅ here to get job offers\n` +
         `- Team list: ${teamList}\n` +
         `- Coach role: ${coachRole}\n` +
         `- Allowed roles: **${allowedRoles}**\n` +
         `- Conferences: **${confDisplay}**\n` +
-        `- Stars range: **${minStars ?? 0.0}–${maxStars ?? 5.0}**\n` +
+        `- Stars range: **${minStars}–${maxStars}**\n` +
         `- Scheme filtering: **${schemeFilter ? 'On' : 'Off'}**\n` +
         `- Job offers per user: **${offerCount}**`
       );
+    }
+
+    if (!interaction.isCommand()) return;
+    const name = interaction.commandName;
+
+    // ---------------------------
+    // /setup — shows a modal form
+    // ---------------------------
+    if (name === 'setup') {
+      const modal = new ModalBuilder()
+        .setCustomId('setup_modal')
+        .setTitle('Dynasty League Setup');
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('allowed_roles')
+            .setLabel('Coaching Roles Available')
+            .setPlaceholder('HC  |  OC,DC  |  HC,OC,DC')
+            .setValue('HC')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('conferences')
+            .setLabel('Conferences (comma-separated, blank = all)')
+            .setPlaceholder('e.g. SEC,Big Ten,ACC  — or leave blank for all')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('stars_range')
+            .setLabel('Prestige Star Range (MIN-MAX)')
+            .setPlaceholder('e.g. 0-5  or  1-3')
+            .setValue('0-5')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('scheme_filter')
+            .setLabel('Filter offers by scheme compatibility?')
+            .setPlaceholder('yes  or  no')
+            .setValue('no')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('offer_count')
+            .setLabel('Job offers per user (1-5)')
+            .setValue('5')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
+
+      return interaction.showModal(modal);
     }
 
     // ---------------------------

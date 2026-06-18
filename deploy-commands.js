@@ -6,60 +6,9 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 const commands = [
   new SlashCommandBuilder()
     .setName('setup')
-    .setDescription("Configure this server's dynasty league — bot creates channels/role automatically (admin only)")
+    .setDescription("Configure this server's dynasty league (admin only)")
     .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .addStringOption(o => o
-      .setName('allowed_roles')
-      .setDescription('Which coaching roles are available (default: HC only)')
-      .setRequired(false)
-      .addChoices(
-        { name: 'HC only (default)', value: 'HC' },
-        { name: 'OC and DC only', value: 'OC,DC' },
-        { name: 'All (HC, OC, DC)', value: 'HC,OC,DC' }
-      ))
-    .addStringOption(o => o
-      .setName('conferences')
-      .setDescription('Conferences to include, comma-separated (default: ALL). e.g. "SEC,Big Ten,ACC"')
-      .setRequired(false))
-    .addNumberOption(o => o
-      .setName('min_stars')
-      .setDescription('Minimum school prestige 0.0-5.0 (default 0.0)')
-      .setMinValue(0)
-      .setMaxValue(5)
-      .setRequired(false))
-    .addNumberOption(o => o
-      .setName('max_stars')
-      .setDescription('Maximum school prestige 0.0-5.0 (default 5.0)')
-      .setMinValue(0)
-      .setMaxValue(5)
-      .setRequired(false))
-    .addBooleanOption(o => o
-      .setName('scheme_filter')
-      .setDescription('Filter job offers by coaching scheme compatibility? (default: No)')
-      .setRequired(false))
-    .addIntegerOption(o => o
-      .setName('offer_count')
-      .setDescription('How many job offers to send each user (default: 5)')
-      .setMinValue(1)
-      .setMaxValue(5)
-      .setRequired(false))
-    .addChannelOption(o => o
-      .setName('general')
-      .setDescription('Use an existing #general channel instead of creating one')
-      .setRequired(false))
-    .addChannelOption(o => o
-      .setName('rules')
-      .setDescription('Use an existing #rules channel instead of creating one')
-      .setRequired(false))
-    .addChannelOption(o => o
-      .setName('team_list')
-      .setDescription('Use an existing #team-list channel instead of creating one')
-      .setRequired(false))
-    .addRoleOption(o => o
-      .setName('coach_role')
-      .setDescription('Use an existing role instead of creating a "coach" role')
-      .setRequired(false)),
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   new SlashCommandBuilder()
     .setName('joboffers')
