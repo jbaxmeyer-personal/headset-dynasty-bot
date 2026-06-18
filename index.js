@@ -51,10 +51,9 @@ const {
   ChannelType,
   PermissionFlagsBits,
   Partials,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder
 } = require('discord.js');
 
 const { createClient } = require('@supabase/supabase-js');
@@ -334,6 +333,98 @@ async function getAvailableSchools(league, count, schemePrefs = {}) {
   const { data, error } = await q;
   if (error) throw error;
   return pickRandom(data || [], count);
+}
+
+// ---------------------------------------------------------
+// SETUP UI HELPERS
+// Builds the ephemeral dropdown panel for /setup.
+// ---------------------------------------------------------
+const STAR_PRESETS = [
+  { label: 'All programs (0–5 ⭐)', value: '0-5', description: 'No prestige filter — all schools included' },
+  { label: 'Low prestige (0–2 ⭐)', value: '0-2', description: 'Rebuilding and low-major programs only' },
+  { label: 'Mid prestige (1–3 ⭐)', value: '1-3', description: 'Mid-major and smaller conference programs' },
+  { label: 'Upper mid (2–4 ⭐)', value: '2-4', description: 'Solid programs, no bottom or top tier' },
+  { label: 'High prestige (3–5 ⭐)', value: '3-5', description: 'Power program jobs only' },
+  { label: 'Elite only (4–5 ⭐)', value: '4-5', description: 'Top-tier blue blood programs only' },
+];
+
+const CFB_CONFERENCES_FALLBACK = [
+  'SEC','Big Ten','ACC','Big 12','Pac-12',
+  'American Athletic','Mountain West','Sun Belt','MAC','Conference USA','Independents'
+];
+
+async function getConferencesForDropdown() {
+  const { data } = await supabase.from('schools').select('conference').not('conference', 'is', null);
+  const fromDb = [...new Set((data || []).map(r => r.conference).filter(Boolean))].sort();
+  return fromDb.length > 0 ? fromDb : CFB_CONFERENCES_FALLBACK;
+}
+
+function buildSetupComponents(cfg, conferences) {
+  const selectedConfs = cfg.allowedConferences ? cfg.allowedConferences.split(',').map(c => c.trim()) : [];
+  const starKey = `${cfg.minStars}-${cfg.maxStars}`;
+
+  const rolesMenu = new StringSelectMenuBuilder()
+    .setCustomId('setup_roles')
+    .setPlaceholder('Coaching roles available in this league')
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel('HC only').setValue('HC').setDescription('Head Coach only').setDefault(cfg.allowedRoles === 'HC'),
+      new StringSelectMenuOptionBuilder().setLabel('OC & DC only').setValue('OC,DC').setDescription('Offensive and Defensive Coordinators only').setDefault(cfg.allowedRoles === 'OC,DC'),
+      new StringSelectMenuOptionBuilder().setLabel('HC, OC & DC').setValue('HC,OC,DC').setDescription('All three coaching roles available').setDefault(cfg.allowedRoles === 'HC,OC,DC'),
+    );
+
+  const confOptions = conferences.map(c =>
+    new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDefault(selectedConfs.includes(c))
+  );
+  const confMenu = new StringSelectMenuBuilder()
+    .setCustomId('setup_conferences')
+    .setPlaceholder(selectedConfs.length > 0 ? `${selectedConfs.length} conference(s) selected` : 'All conferences (default — leave blank for all)')
+    .setMinValues(0)
+    .setMaxValues(conferences.length)
+    .addOptions(confOptions);
+
+  const starsMenu = new StringSelectMenuBuilder()
+    .setCustomId('setup_star_range')
+    .setPlaceholder('School prestige range')
+    .addOptions(STAR_PRESETS.map(p =>
+      new StringSelectMenuOptionBuilder().setLabel(p.label).setValue(p.value).setDescription(p.description).setDefault(starKey === p.value)
+    ));
+
+  const offerMenu = new StringSelectMenuBuilder()
+    .setCustomId('setup_offer_count')
+    .setPlaceholder('How many job offers per user?')
+    .addOptions([1,2,3,4,5].map(n =>
+      new StringSelectMenuOptionBuilder().setLabel(`${n} offer${n > 1 ? 's' : ''} per user`).setValue(String(n)).setDefault(cfg.offerCount === n)
+    ));
+
+  const schemeMenu = new StringSelectMenuBuilder()
+    .setCustomId('setup_scheme')
+    .setPlaceholder('Scheme compatibility filtering')
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel('No scheme filtering').setValue('false').setDescription('Offer any schools matching other filters').setDefault(!cfg.schemeFilter),
+      new StringSelectMenuOptionBuilder().setLabel('Filter by scheme preference').setValue('true').setDescription('Only offer schools that match the coach\'s scheme').setDefault(cfg.schemeFilter),
+    );
+
+  return [
+    new ActionRowBuilder().addComponents(rolesMenu),
+    new ActionRowBuilder().addComponents(confMenu),
+    new ActionRowBuilder().addComponents(starsMenu),
+    new ActionRowBuilder().addComponents(offerMenu),
+    new ActionRowBuilder().addComponents(schemeMenu),
+  ];
+}
+
+function buildSetupContent(cfg, league, channelLine) {
+  const confDisplay = cfg.allowedConferences || 'All conferences';
+  return (
+    `## 🏈 Dynasty League Setup — ${league.name || 'this server'}\n` +
+    `${channelLine}\n` +
+    `**Current settings** (selections save automatically):\n` +
+    `- Coaching roles: **${cfg.allowedRoles}**\n` +
+    `- Conferences: **${confDisplay}**\n` +
+    `- Prestige range: **${cfg.minStars}–${cfg.maxStars} ⭐**\n` +
+    `- Offers per user: **${cfg.offerCount}**\n` +
+    `- Scheme filtering: **${cfg.schemeFilter ? 'On' : 'Off'}**`
+  );
 }
 
 // ---------------------------------------------------------
@@ -748,35 +839,55 @@ client.on('interactionCreate', async interaction => {
     }
 
     // ---------------------------
-    // /setup modal submission
+    // /setup select menu interactions (auto-save on each change)
     // ---------------------------
-    if (interaction.isModalSubmit && interaction.isModalSubmit() && interaction.customId === 'setup_modal') {
+    if (interaction.isStringSelectMenu && interaction.isStringSelectMenu() && interaction.customId.startsWith('setup_')) {
+      await interaction.deferUpdate();
+
+      const league = await getLeague(interaction.guildId);
+      if (!league) return;
+
+      let updatePayload = {};
+      if (interaction.customId === 'setup_roles') {
+        updatePayload.allowed_roles = interaction.values[0];
+      } else if (interaction.customId === 'setup_conferences') {
+        updatePayload.allowed_conferences = interaction.values.length > 0 ? interaction.values.join(',') : null;
+      } else if (interaction.customId === 'setup_star_range') {
+        const [min, max] = interaction.values[0].split('-').map(parseFloat);
+        updatePayload.min_stars = min;
+        updatePayload.max_stars = max;
+      } else if (interaction.customId === 'setup_offer_count') {
+        updatePayload.offer_count = parseInt(interaction.values[0]);
+      } else if (interaction.customId === 'setup_scheme') {
+        updatePayload.scheme_filter = interaction.values[0] === 'true';
+      }
+
+      const { error } = await supabase.from('leagues').update(updatePayload).eq('guild_id', interaction.guildId);
+      if (error) { console.error('Setup update error:', error); return; }
+      invalidateLeagueCache(interaction.guildId);
+
+      const updated = await getLeague(interaction.guildId);
+      const cfg = { allowedRoles: updated.allowed_roles, allowedConferences: updated.allowed_conferences, minStars: updated.min_stars, maxStars: updated.max_stars, offerCount: updated.offer_count, schemeFilter: updated.scheme_filter };
+      const conferences = await getConferencesForDropdown();
+
+      const general = await client.channels.fetch(updated.general_channel_id).catch(() => null);
+      const rules = await client.channels.fetch(updated.rules_channel_id).catch(() => null);
+      const teamList = await client.channels.fetch(updated.team_list_channel_id).catch(() => null);
+      const coachRole = interaction.guild.roles.cache.get(updated.coach_role_id);
+      const channelLine = `${general || '#general'} | ${rules || '#rules'} (react ✅ for offers) | ${teamList || '#team-list'} | ${coachRole || '@coach'}`;
+
+      return interaction.editReply({ content: buildSetupContent(cfg, updated, channelLine) + '\n\n✅ Saved!', components: buildSetupComponents(cfg, conferences) });
+    }
+
+    if (!interaction.isCommand()) return;
+    const name = interaction.commandName;
+
+    // ---------------------------
+    // /setup — sends ephemeral dropdown panel
+    // ---------------------------
+    if (name === 'setup') {
       await interaction.deferReply({ ephemeral: true });
-
       const guild = interaction.guild;
-      const allowedRoles = interaction.fields.getTextInputValue('allowed_roles').trim().toUpperCase().replace(/\s/g, '');
-      const conferencesRaw = interaction.fields.getTextInputValue('conferences').trim();
-      const starsRaw = interaction.fields.getTextInputValue('stars_range').trim();
-      const schemeFilterRaw = interaction.fields.getTextInputValue('scheme_filter').trim().toLowerCase();
-      const offerCountRaw = interaction.fields.getTextInputValue('offer_count').trim();
-
-      const validRoles = ['HC', 'OC,DC', 'HC,OC,DC'];
-      if (!validRoles.includes(allowedRoles)) {
-        return interaction.editReply('Invalid roles. Enter exactly: `HC`, `OC,DC`, or `HC,OC,DC`');
-      }
-
-      const [minStr, maxStr] = starsRaw.split('-');
-      const minStars = parseFloat(minStr);
-      const maxStars = parseFloat(maxStr);
-      if (isNaN(minStars) || isNaN(maxStars) || minStars < 0 || maxStars > 5 || minStars > maxStars) {
-        return interaction.editReply('Invalid star range. Use format `MIN-MAX` e.g. `0-5` or `1-3`.');
-      }
-
-      const schemeFilter = schemeFilterRaw === 'yes' || schemeFilterRaw === 'y';
-      const offerCount = Math.min(5, Math.max(1, parseInt(offerCountRaw) || 5));
-      const allowedConferences = (conferencesRaw && conferencesRaw.toUpperCase() !== 'ALL')
-        ? conferencesRaw.split(',').map(c => c.trim()).filter(Boolean).join(',')
-        : null;
 
       let general = guild.channels.cache.find(c => c.name === 'general' && c.isTextBased());
       if (!general) general = await guild.channels.create({ name: 'general', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
@@ -790,102 +901,28 @@ client.on('interactionCreate', async interaction => {
       let coachRole = guild.roles.cache.find(r => r.name === 'coach');
       if (!coachRole) coachRole = await guild.roles.create({ name: 'coach', reason: 'Dynasty bot setup' });
 
-      const payload = {
-        name: guild.name,
-        general_channel_id: general.id,
-        rules_channel_id: rules.id,
-        team_list_channel_id: teamList.id,
-        coach_role_id: coachRole.id,
-        allowed_roles: allowedRoles,
-        allowed_conferences: allowedConferences,
-        min_stars: minStars,
-        max_stars: maxStars,
-        scheme_filter: schemeFilter,
-        offer_count: offerCount
+      const existing = await getLeague(interaction.guildId);
+      const cfg = {
+        allowedRoles: existing?.allowed_roles || 'HC',
+        allowedConferences: existing?.allowed_conferences || null,
+        minStars: existing?.min_stars ?? 0,
+        maxStars: existing?.max_stars ?? 5,
+        offerCount: existing?.offer_count || 5,
+        schemeFilter: existing?.scheme_filter || false,
       };
 
-      const { data: existing } = await supabase.from('leagues').select('id').eq('guild_id', interaction.guildId).maybeSingle();
+      const payload = { name: guild.name, general_channel_id: general.id, rules_channel_id: rules.id, team_list_channel_id: teamList.id, coach_role_id: coachRole.id, allowed_roles: cfg.allowedRoles, allowed_conferences: cfg.allowedConferences, min_stars: cfg.minStars, max_stars: cfg.maxStars, scheme_filter: cfg.schemeFilter, offer_count: cfg.offerCount };
       const { error } = existing
         ? await supabase.from('leagues').update(payload).eq('guild_id', interaction.guildId)
         : await supabase.from('leagues').insert({ guild_id: interaction.guildId, ...payload });
-
-      if (error) { console.error('Setup Supabase error:', JSON.stringify(error, null, 2)); return interaction.editReply(`Setup failed: ${error.message}`); }
-
+      if (error) { console.error('Setup error:', error); return interaction.editReply(`Setup failed: ${error.message}`); }
       invalidateLeagueCache(interaction.guildId);
 
-      const confDisplay = allowedConferences || 'All conferences';
-      return interaction.editReply(
-        `✅ League configured!\n` +
-        `- General: ${general}\n` +
-        `- Rules: ${rules} — users react ✅ here to get job offers\n` +
-        `- Team list: ${teamList}\n` +
-        `- Coach role: ${coachRole}\n` +
-        `- Allowed roles: **${allowedRoles}**\n` +
-        `- Conferences: **${confDisplay}**\n` +
-        `- Stars range: **${minStars}–${maxStars}**\n` +
-        `- Scheme filtering: **${schemeFilter ? 'On' : 'Off'}**\n` +
-        `- Job offers per user: **${offerCount}**`
-      );
-    }
+      const league = await getLeague(interaction.guildId);
+      const conferences = await getConferencesForDropdown();
+      const channelLine = `${general} | ${rules} (react ✅ for offers) | ${teamList} | ${coachRole}`;
 
-    if (!interaction.isCommand()) return;
-    const name = interaction.commandName;
-
-    // ---------------------------
-    // /setup — shows a modal form
-    // ---------------------------
-    if (name === 'setup') {
-      const modal = new ModalBuilder()
-        .setCustomId('setup_modal')
-        .setTitle('Dynasty League Setup');
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId('allowed_roles')
-            .setLabel('Coaching Roles Available')
-            .setPlaceholder('HC  |  OC,DC  |  HC,OC,DC')
-            .setValue('HC')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-        ),
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId('conferences')
-            .setLabel('Conferences (comma-separated, blank = all)')
-            .setPlaceholder('e.g. SEC,Big Ten,ACC  — or leave blank for all')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(false)
-        ),
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId('stars_range')
-            .setLabel('Prestige Star Range (MIN-MAX)')
-            .setPlaceholder('e.g. 0-5  or  1-3')
-            .setValue('0-5')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-        ),
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId('scheme_filter')
-            .setLabel('Filter offers by scheme compatibility?')
-            .setPlaceholder('yes  or  no')
-            .setValue('no')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-        ),
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId('offer_count')
-            .setLabel('Job offers per user (1-5)')
-            .setValue('5')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-        )
-      );
-
-      return interaction.showModal(modal);
+      return interaction.editReply({ content: buildSetupContent(cfg, league, channelLine), components: buildSetupComponents(cfg, conferences) });
     }
 
     // ---------------------------
