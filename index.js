@@ -744,7 +744,7 @@ async function claimTeam(msg, offerData, school, role) {
     const coachRole = guild.roles.cache.get(league.coach_role_id);
     if (coachRole) await member.roles.add(coachRole, 'Claimed team');
     const nickname = `${school.name} - ${role}`.substring(0, 32);
-    await member.setNickname(nickname, 'Claimed team').catch(() => {});
+    await member.setNickname(nickname, 'Claimed team').catch(err => console.error('setNickname failed:', err.message));
   } catch (err) {
     console.error(`Failed to assign role/nickname to ${userId}:`, err);
   }
