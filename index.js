@@ -272,6 +272,36 @@ const DEFENSE_COMPATIBLE = {
 };
 
 // ---------------------------------------------------------
+// HELP TEXT (shared between /help and guildCreate DM)
+// ---------------------------------------------------------
+const HELP_TEXT =
+  `## Headset Dynasty Bot — Setup Guide\n\n` +
+  `**Step 1: Run \`/setup\`**\n` +
+  `A form will pop up with dropdowns for each setting:\n` +
+  `- **Coaching Roles** — which roles coaches can hold: HC, OC+DC, or all three\n` +
+  `- **Conferences** — limit schools by conference, or leave blank for all\n` +
+  `- **Star Range** — school prestige filter (pick your min and max)\n` +
+  `- **Offer Count** — how many job offers each user receives (1–5)\n` +
+  `- **Scheme Filtering** — only offer schools that match a coach's scheme preference\n\n` +
+  `The bot auto-creates: **#general**, **#rules**, **#team-list**, and a **@coach** role.\n\n` +
+  `**Step 2: Post a message in #rules**\n` +
+  `Tell your members to react ✅ to a pinned message in #rules to get job offers. ` +
+  `When someone reacts, the bot DMs them their job offers automatically.\n\n` +
+  `**How the offer flow works:**\n` +
+  `1. User reacts ✅ in #rules\n` +
+  `2. Bot DMs them a list of available schools\n` +
+  `3. User replies with a number to pick their school\n` +
+  `4. If multiple roles are enabled, bot asks which role they want\n` +
+  `5. Bot assigns nickname, creates a private team channel, gives @coach role, and announces in #general\n\n` +
+  `**Admin commands:**\n` +
+  `\`/setup\` — Run again anytime to update league settings\n` +
+  `\`/joboffers @user\` — Manually send job offers to a specific user\n` +
+  `\`/resetteam @user\` — Remove a coach (deletes channel, clears nickname, removes @coach role)\n` +
+  `\`/move-coach @user\` — Move a coach to a different school\n` +
+  `\`/listteams\` — Refresh the #team-list channel\n\n` +
+  `**Need help?** Run \`/help\` anytime in your server.`;
+
+// ---------------------------------------------------------
 // LEAGUE CONFIG CACHE (one entry per guild ID)
 // ---------------------------------------------------------
 const leagueCache = new Map();
@@ -917,36 +947,7 @@ client.on('interactionCreate', async interaction => {
     // /help
     // ---------------------------
     if (name === 'help') {
-      return interaction.reply({
-        ephemeral: true,
-        content:
-          `## Headset Dynasty Bot — Setup Guide\n\n` +
-          `**Step 1: Run \`/setup\`**\n` +
-          `A form will pop up. Fill it out:\n` +
-          `- **Coaching Roles** — which roles coaches can hold: \`HC\`, \`OC,DC\`, or \`HC,OC,DC\`\n` +
-          `- **Conferences** — limit schools by conference (e.g. \`SEC,Big Ten\`), or leave blank for all\n` +
-          `- **Star Range** — school prestige filter (e.g. \`0-5\` for all, \`1-3\` for mid-tier only)\n` +
-          `- **Scheme Filtering** — \`yes\` to only offer schools that match a coach's scheme preference, \`no\` to skip\n` +
-          `- **Offer Count** — how many job offers each user receives (1–5)\n\n` +
-          `The bot auto-creates: **#general**, **#rules**, **#team-list**, and a **@coach** role.\n\n` +
-          `**Step 2: Post a message in #rules**\n` +
-          `Tell your members to react ✅ to a pinned message in #rules to get job offers. ` +
-          `When someone reacts, the bot DMs them their job offers automatically.\n\n` +
-          `**How the offer flow works:**\n` +
-          `1. User reacts ✅ in #rules\n` +
-          `2. Bot DMs them a list of available schools\n` +
-          `3. User replies with a number (1–5) to pick their school\n` +
-          `4. If multiple roles are enabled, bot asks which role they want\n` +
-          `5. Bot assigns nickname, creates a private team channel, gives @coach role, and announces in #general\n\n` +
-          `**Admin commands:**\n` +
-          `\`/setup\` — Run again anytime to update league settings\n` +
-          `\`/joboffers @user\` — Manually send job offers to a specific user\n` +
-          `\`/resetteam @user\` — Remove a coach (deletes channel, clears nickname, removes @coach role)\n` +
-          `\`/move-coach @user\` — Move a coach to a different school\n` +
-          `\`/listteams\` — Refresh the #team-list channel\n\n` +
-          `**Want to add this bot to your server?**\n` +
-          `Use \`/invite\` to get the link.`
-      });
+      return interaction.reply({ ephemeral: true, content: HELP_TEXT });
     }
 
     // ---------------------------
@@ -1934,6 +1935,15 @@ process.on('uncaughtException', async (err) => {
     if (client && client.destroy) await client.destroy();
   } catch {}
   process.exit(1);
+});
+
+client.on('guildCreate', async guild => {
+  try {
+    const owner = await guild.fetchOwner();
+    await owner.send(`👋 Thanks for adding **Headset Dynasty Bot** to **${guild.name}**!\n\n${HELP_TEXT}`);
+  } catch (err) {
+    console.error(`guildCreate: could not DM owner of ${guild.name}:`, err.message);
+  }
 });
 
 client.on('error', (err) => console.error('Discord client error:', err));
