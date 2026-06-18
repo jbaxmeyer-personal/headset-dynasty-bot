@@ -55,7 +55,9 @@ const {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   ChannelSelectMenuBuilder,
-  RoleSelectMenuBuilder
+  RoleSelectMenuBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } = require('discord.js');
 
 const { createClient } = require('@supabase/supabase-js');
@@ -453,12 +455,13 @@ function buildSetupContent(cfg, guildName, channelLine) {
   );
 }
 
-function buildChannelPanel() {
+function buildChannelPanel(saved = false) {
   return {
     content:
       `## 🏈 Dynasty League Setup — Channels & Role\n` +
-      `Point the bot to existing channels and a role, or leave as-is to keep the auto-created ones.\n` +
-      `*(Selections save automatically)*`,
+      `Select your existing channels and coach role below, then click **Auto-create missing** for anything you leave blank.\n` +
+      `*(Channel/role selections save automatically)*` +
+      (saved ? '\n\n✅ Saved!' : ''),
     components: [
       new ActionRowBuilder().addComponents(
         new ChannelSelectMenuBuilder()
@@ -469,7 +472,7 @@ function buildChannelPanel() {
       new ActionRowBuilder().addComponents(
         new ChannelSelectMenuBuilder()
           .setCustomId('setup_channel_rules')
-          .setPlaceholder('📋 #rules — users react ✅ here to get offers')
+          .setPlaceholder('📋 #rules — users react ✅ here to get job offers')
           .addChannelTypes(ChannelType.GuildText)
       ),
       new ActionRowBuilder().addComponents(
@@ -481,7 +484,13 @@ function buildChannelPanel() {
       new ActionRowBuilder().addComponents(
         new RoleSelectMenuBuilder()
           .setCustomId('setup_role_coach')
-          .setPlaceholder('🏷️ @coach — role assigned to all coaches')
+          .setPlaceholder('🏷️ @coach role — assigned to all coaches')
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('setup_autocreate')
+          .setLabel('Auto-create missing channels & role')
+          .setStyle(ButtonStyle.Primary)
       ),
     ]
   };
@@ -955,9 +964,56 @@ client.on('interactionCreate', async interaction => {
       if (error) { console.error('Channel/role update error:', error); return; }
       invalidateLeagueCache(interaction.guildId);
 
-      const panel = buildChannelPanel();
-      panel.content += '\n\n✅ Saved!';
-      return interaction.editReply(panel);
+      return interaction.editReply(buildChannelPanel(true));
+    }
+
+    // ---------------------------
+    // /setup "Auto-create missing" button
+    // ---------------------------
+    if (interaction.isButton && interaction.isButton() && interaction.customId === 'setup_autocreate') {
+      await interaction.deferUpdate();
+      const guild = interaction.guild;
+      const league = await getLeague(interaction.guildId);
+      if (!league) return interaction.editReply({ content: '⚠️ Run `/setup` first to configure your league.', components: [] });
+
+      const updates = {};
+      const created = [];
+
+      if (!league.general_channel_id) {
+        let ch = guild.channels.cache.find(c => c.name === 'general' && c.isTextBased());
+        if (!ch) { ch = await guild.channels.create({ name: 'general', type: ChannelType.GuildText, reason: 'Dynasty bot setup' }); created.push('#general (created)'); }
+        else created.push('#general (linked existing)');
+        updates.general_channel_id = ch.id;
+      }
+      if (!league.rules_channel_id) {
+        let ch = guild.channels.cache.find(c => c.name === 'rules' && c.isTextBased());
+        if (!ch) { ch = await guild.channels.create({ name: 'rules', type: ChannelType.GuildText, reason: 'Dynasty bot setup' }); created.push('#rules (created)'); }
+        else created.push('#rules (linked existing)');
+        updates.rules_channel_id = ch.id;
+      }
+      if (!league.team_list_channel_id) {
+        let ch = guild.channels.cache.find(c => c.name === 'team-list' && c.isTextBased());
+        if (!ch) { ch = await guild.channels.create({ name: 'team-list', type: ChannelType.GuildText, reason: 'Dynasty bot setup' }); created.push('#team-list (created)'); }
+        else created.push('#team-list (linked existing)');
+        updates.team_list_channel_id = ch.id;
+      }
+      if (!league.coach_role_id) {
+        let role = guild.roles.cache.find(r => r.name === 'coach');
+        if (!role) { role = await guild.roles.create({ name: 'coach', reason: 'Dynasty bot setup' }); created.push('@coach (created)'); }
+        else created.push('@coach (linked existing)');
+        updates.coach_role_id = role.id;
+      }
+
+      if (Object.keys(updates).length) {
+        const { error } = await supabase.from('leagues').update(updates).eq('guild_id', interaction.guildId);
+        if (error) { console.error('Auto-create update error:', error); return; }
+        invalidateLeagueCache(interaction.guildId);
+      }
+
+      const summary = created.length
+        ? `✅ Done: ${created.join(', ')}`
+        : '✅ All channels and role are already configured — nothing to create.';
+      return interaction.editReply({ content: `## 🏈 Dynasty League Setup — Channels & Role\n${summary}\n\n*(Use the dropdowns above to point to different channels/roles at any time)*`, components: buildChannelPanel().components });
     }
 
     if (!interaction.isCommand()) return;
@@ -970,18 +1026,6 @@ client.on('interactionCreate', async interaction => {
       await interaction.deferReply({ ephemeral: true });
       const guild = interaction.guild;
 
-      let general = guild.channels.cache.find(c => c.name === 'general' && c.isTextBased());
-      if (!general) general = await guild.channels.create({ name: 'general', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
-
-      let rules = guild.channels.cache.find(c => c.name === 'rules' && c.isTextBased());
-      if (!rules) rules = await guild.channels.create({ name: 'rules', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
-
-      let teamList = guild.channels.cache.find(c => c.name === 'team-list' && c.isTextBased());
-      if (!teamList) teamList = await guild.channels.create({ name: 'team-list', type: ChannelType.GuildText, reason: 'Dynasty bot setup' });
-
-      let coachRole = guild.roles.cache.find(r => r.name === 'coach');
-      if (!coachRole) coachRole = await guild.roles.create({ name: 'coach', reason: 'Dynasty bot setup' });
-
       const existing = await getLeague(interaction.guildId);
       const cfg = {
         allowedRoles: existing?.allowed_roles || 'HC',
@@ -992,16 +1036,20 @@ client.on('interactionCreate', async interaction => {
         schemeFilter: existing?.scheme_filter || false,
       };
 
-      const payload = { name: guild.name, general_channel_id: general.id, rules_channel_id: rules.id, team_list_channel_id: teamList.id, coach_role_id: coachRole.id, allowed_roles: cfg.allowedRoles, allowed_conferences: cfg.allowedConferences, min_stars: cfg.minStars, max_stars: cfg.maxStars, scheme_filter: cfg.schemeFilter, offer_count: cfg.offerCount };
-      const { error } = existing
-        ? await supabase.from('leagues').update(payload).eq('guild_id', interaction.guildId)
-        : await supabase.from('leagues').insert({ guild_id: interaction.guildId, ...payload });
-      if (error) { console.error('Setup error:', error); return interaction.editReply(`Setup failed: ${error.message}`); }
-      invalidateLeagueCache(interaction.guildId);
+      if (!existing) {
+        const { error } = await supabase.from('leagues').insert({ guild_id: interaction.guildId, name: guild.name, allowed_roles: cfg.allowedRoles, min_stars: cfg.minStars, max_stars: cfg.maxStars, scheme_filter: cfg.schemeFilter, offer_count: cfg.offerCount });
+        if (error) { console.error('Setup error:', error); return interaction.editReply(`Setup failed: ${error.message}`); }
+        invalidateLeagueCache(interaction.guildId);
+      }
+
+      const league = await getLeague(interaction.guildId);
+      const general = league?.general_channel_id ? await client.channels.fetch(league.general_channel_id).catch(() => null) : null;
+      const rules = league?.rules_channel_id ? await client.channels.fetch(league.rules_channel_id).catch(() => null) : null;
+      const teamList = league?.team_list_channel_id ? await client.channels.fetch(league.team_list_channel_id).catch(() => null) : null;
+      const coachRole = league?.coach_role_id ? guild.roles.cache.get(league.coach_role_id) : null;
+      const channelLine = `${general || '*(not set)*'} | ${rules || '*(not set)*'} (react ✅ for offers) | ${teamList || '*(not set)*'} | ${coachRole || '*(not set)*'}`;
 
       const conferences = await getConferencesForDropdown();
-      const channelLine = `${general} | ${rules} (react ✅ for offers) | ${teamList} | ${coachRole}`;
-
       await interaction.editReply({ content: buildSetupContent(cfg, guild.name, channelLine), components: buildSetupComponents(cfg, conferences) });
       await interaction.followUp({ ephemeral: true, ...buildChannelPanel() });
     }
