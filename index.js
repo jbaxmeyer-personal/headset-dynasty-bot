@@ -787,7 +787,7 @@ client.on('interactionCreate', async interaction => {
         offer_count: offerCount
       }, { onConflict: 'guild_id' });
 
-      if (error) return interaction.editReply(`Setup failed: ${error.message}`);
+      if (error) { console.error('Setup Supabase error:', JSON.stringify(error, null, 2)); return interaction.editReply(`Setup failed: ${error.message}`); }
 
       invalidateLeagueCache(interaction.guildId);
 
