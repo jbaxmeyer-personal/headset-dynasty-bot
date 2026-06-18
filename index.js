@@ -73,7 +73,7 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
-// soft-lock: prevents duplicate job offer sends per bot session
+// soft-lock: prevents duplicate job offer sends per bot session; keyed as "guildId:userId"
 const jobOfferUsed = new Set();
 if (!globalThis.jobOfferUsedGlobal) globalThis.jobOfferUsedGlobal = jobOfferUsed;
 
@@ -436,7 +436,24 @@ async function startOfferFlow(user, guildId) {
   const league = await getLeague(guildId);
   if (!league) throw new Error('This server has not been configured yet. An admin must run /setup first.');
 
+  // Block if user already has a team in this league
+  const { data: existingTeam } = await supabase
+    .from('league_teams').select('id').eq('league_id', league.id).eq('taken_by', user.id).maybeSingle();
+  if (existingTeam) {
+    await user.send(`⛔ You already have a team in **${league.name || 'this league'}**. Contact an admin if you need to make a change.`);
+    return false;
+  }
+
+  // Block if user already has an active offer flow from a different server
   if (!client.userOffers) client.userOffers = {};
+  const existing = client.userOffers[user.id];
+  if (existing && existing.guildId !== guildId) {
+    const otherGuild = client.guilds.cache.get(existing.guildId);
+    const otherName = otherGuild ? otherGuild.name : 'another server';
+    await user.send(`⛔ You already have a pending job offer from **${otherName}**. Please finish that flow first, then react again here.`);
+    return false;
+  }
+
   client.userOffers[user.id] = {
     guildId,
     step: null,
@@ -564,6 +581,10 @@ async function claimTeam(msg, offerData, school, role) {
 
   if (insertErr) {
     console.error('Failed to claim team:', insertErr);
+    if (insertErr.code === '23505') {
+      delete client.userOffers[userId];
+      return msg.reply(`**${school.name}** was just claimed by someone else. Contact an admin to get new offers.`);
+    }
     return msg.reply(`Failed to claim **${school.name}**: ${insertErr.message}`);
   }
 
@@ -1762,18 +1783,20 @@ client.on('messageReactionAdd', async (reaction, user) => {
     // Only trigger in the configured rules channel
     if (reaction.message.channelId !== league.rules_channel_id) return;
 
-    if (jobOfferUsed.has(user.id)) {
-      try { await user.send("⛔ You've already received your job offers."); } catch {}
+    const offerKey = `${guildId}:${user.id}`;
+    if (jobOfferUsed.has(offerKey)) {
+      try { await user.send("⛔ You've already received your job offers for this league."); } catch {}
       return;
     }
 
-    jobOfferUsed.add(user.id);
+    jobOfferUsed.add(offerKey);
 
     try {
-      await startOfferFlow(user, guildId);
+      const started = await startOfferFlow(user, guildId);
+      if (!started) jobOfferUsed.delete(offerKey);
     } catch (err) {
       console.error('startOfferFlow error:', err);
-      jobOfferUsed.delete(user.id);
+      jobOfferUsed.delete(offerKey);
       try { await user.send(`Error starting job offers: ${err.message}`); } catch {}
     }
   } catch (err) {
