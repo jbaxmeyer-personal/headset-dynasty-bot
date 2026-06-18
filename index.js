@@ -376,14 +376,13 @@ function buildSetupComponents(cfg, conferences) {
 
   const starsMenu = new StringSelectMenuBuilder()
     .setCustomId('setup_star_range')
-    .setPlaceholder('Select min & max prestige — lowest and highest selected set the range')
+    .setPlaceholder(`Prestige range: Min ${cfg.minStars} ⭐ — Max ${cfg.maxStars} ⭐  (select new values to change)`)
     .setMinValues(1)
     .setMaxValues(STAR_VALUES.length)
     .addOptions(STAR_VALUES.map(v =>
       new StringSelectMenuOptionBuilder()
         .setLabel(`${v} ⭐`)
         .setValue(String(v))
-        .setDefault(v === cfg.minStars || v === cfg.maxStars)
     ));
 
   const offerMenu = new StringSelectMenuBuilder()
