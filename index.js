@@ -410,10 +410,10 @@ function buildSetupComponents(cfg, conferences) {
   ];
 }
 
-function buildSetupContent(cfg, league, channelLine) {
+function buildSetupContent(cfg, guildName, channelLine) {
   const confDisplay = cfg.allowedConferences || 'All conferences';
   return (
-    `## 🏈 Dynasty League Setup — ${league.name || 'this server'}\n` +
+    `## 🏈 Dynasty League Setup — ${guildName || 'this server'}\n` +
     `${channelLine}\n` +
     `**Current settings** (selections save automatically):\n` +
     `- Coaching roles: **${cfg.allowedRoles}**\n` +
@@ -864,6 +864,7 @@ client.on('interactionCreate', async interaction => {
       invalidateLeagueCache(interaction.guildId);
 
       const updated = await getLeague(interaction.guildId);
+      if (!updated) return;
       const cfg = { allowedRoles: updated.allowed_roles, allowedConferences: updated.allowed_conferences, minStars: updated.min_stars, maxStars: updated.max_stars, offerCount: updated.offer_count, schemeFilter: updated.scheme_filter };
       const conferences = await getConferencesForDropdown();
 
@@ -873,7 +874,7 @@ client.on('interactionCreate', async interaction => {
       const coachRole = interaction.guild.roles.cache.get(updated.coach_role_id);
       const channelLine = `${general || '#general'} | ${rules || '#rules'} (react ✅ for offers) | ${teamList || '#team-list'} | ${coachRole || '@coach'}`;
 
-      return interaction.editReply({ content: buildSetupContent(cfg, updated, channelLine) + '\n\n✅ Saved!', components: buildSetupComponents(cfg, conferences) });
+      return interaction.editReply({ content: buildSetupContent(cfg, updated.name || interaction.guild.name, channelLine) + '\n\n✅ Saved!', components: buildSetupComponents(cfg, conferences) });
     }
 
     if (!interaction.isCommand()) return;
@@ -915,11 +916,10 @@ client.on('interactionCreate', async interaction => {
       if (error) { console.error('Setup error:', error); return interaction.editReply(`Setup failed: ${error.message}`); }
       invalidateLeagueCache(interaction.guildId);
 
-      const league = await getLeague(interaction.guildId);
       const conferences = await getConferencesForDropdown();
       const channelLine = `${general} | ${rules} (react ✅ for offers) | ${teamList} | ${coachRole}`;
 
-      return interaction.editReply({ content: buildSetupContent(cfg, league, channelLine), components: buildSetupComponents(cfg, conferences) });
+      return interaction.editReply({ content: buildSetupContent(cfg, guild.name, channelLine), components: buildSetupComponents(cfg, conferences) });
     }
 
     // ---------------------------
