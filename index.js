@@ -998,7 +998,8 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isButton && interaction.isButton() && interaction.customId === 'setup_autocreate') {
       await interaction.deferUpdate();
       const guild = interaction.guild;
-      const league = await getLeague(interaction.guildId);
+      let league = await getLeague(interaction.guildId);
+      if (!league) league = await getLeague(interaction.guildId);
       if (!league) return interaction.editReply({ content: '⚠️ Run `/setup` first to configure your league.', components: [] });
 
       const updates = {};
