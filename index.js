@@ -279,15 +279,18 @@ const DEFENSE_COMPATIBLE = {
 // HELP TEXT (shared between /help and guildCreate DM)
 // ---------------------------------------------------------
 const HELP_TEXT =
-  `## Headset Dynasty Bot — Setup Guide\n\n` +
+  `## CFB27 Job Offer Bot — Setup Guide\n\n` +
   `**Step 1: Run \`/setup\`**\n` +
-  `A form will pop up with dropdowns for each setting:\n` +
+  `First you'll see a channel & role picker:\n` +
+  `- Select your existing **#general**, **#rules**, **#team-list** channels and **@coach** role from the dropdowns\n` +
+  `- Or click **Auto-create missing** to have the bot create any that don't exist yet\n` +
+  `- Then click **Continue to settings →**\n\n` +
+  `The settings panel lets you configure:\n` +
   `- **Coaching Roles** — which roles coaches can hold: HC, OC+DC, or all three\n` +
   `- **Conferences** — limit schools by conference, or leave blank for all\n` +
   `- **Star Range** — school prestige filter (pick your min and max)\n` +
   `- **Offer Count** — how many job offers each user receives (1–5)\n` +
   `- **Scheme Filtering** — only offer schools that match a coach's scheme preference\n\n` +
-  `The bot auto-creates: **#general**, **#rules**, **#team-list**, and a **@coach** role.\n\n` +
   `**Step 2: Post a message in #rules**\n` +
   `Tell your members to react ✅ to a pinned message in #rules to get job offers. ` +
   `When someone reacts, the bot DMs them their job offers automatically.\n\n` +
@@ -298,7 +301,7 @@ const HELP_TEXT =
   `4. If multiple roles are enabled, bot asks which role they want\n` +
   `5. Bot assigns nickname, creates a private team channel, gives @coach role, and announces in #general\n\n` +
   `**Admin commands:**\n` +
-  `\`/setup\` — Run again anytime to update settings. A second panel lets you point to existing channels/roles.\n` +
+  `\`/setup\` — Run again anytime to update settings\n` +
   `\`/joboffers @user\` — Manually send job offers to a specific user\n` +
   `\`/resetteam @user\` — Remove a coach (deletes channel, clears nickname, removes @coach role)\n` +
   `\`/move-coach @user\` — Move a coach to a different school\n` +
