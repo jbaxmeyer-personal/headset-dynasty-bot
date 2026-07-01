@@ -707,7 +707,11 @@ async function advanceOfferFlow(user, league, offerData) {
   offerData.teams = offers;
   offerData.step = 'choose_team';
 
-  let dmText = 'Your Headset Dynasty job offers:\n\n';
+  await sendOfferDM(user, offers);
+}
+
+function buildOfferDMText(offers) {
+  let dmText = 'Your CFB27 job offers:\n\n';
   const grouped = {};
   for (let idx = 0; idx < offers.length; idx++) {
     const t = offers[idx];
@@ -725,8 +729,52 @@ async function advanceOfferFlow(user, league, offerData) {
     dmText += '\n';
   }
   dmText += 'Reply with the number of the team you want to accept.';
+  return dmText;
+}
 
-  await user.send(dmText);
+async function sendOfferDM(user, offers) {
+  await user.send(buildOfferDMText(offers));
+}
+
+// ---------------------------------------------------------
+// REFRESH OFFERS when a chosen school was already claimed
+// ---------------------------------------------------------
+async function refreshOffers(msg, userId, league, offerData, takenSchoolName) {
+  const targetCount = league.offer_count ?? 5;
+
+  // Check which of the existing offers are still available
+  const offeredIds = offerData.teams.map(s => s.id);
+  const { data: stillClaimed } = await supabase
+    .from('league_teams')
+    .select('school_id')
+    .eq('league_id', league.id)
+    .in('school_id', offeredIds);
+
+  const claimedIds = new Set((stillClaimed || []).map(r => r.school_id));
+  const stillAvailable = offerData.teams.filter(s => !claimedIds.has(s.id));
+
+  // Top up with fresh schools if needed
+  const needed = targetCount - stillAvailable.length;
+  if (needed > 0) {
+    const schemePrefs = {
+      offenseScheme: offerData.preferredOffenseScheme,
+      defenseScheme: offerData.preferredDefenseScheme,
+    };
+    const fresh = await getAvailableSchools(league, needed + 5, schemePrefs);
+    const existingIds = new Set(offerData.teams.map(s => s.id));
+    const newPicks = fresh.filter(s => !existingIds.has(s.id)).slice(0, needed);
+    stillAvailable.push(...newPicks);
+  }
+
+  if (stillAvailable.length === 0) {
+    delete client.userOffers[userId];
+    return msg.reply(`**${takenSchoolName}** was just claimed by someone else and there are no other available schools right now. Contact a league admin.`);
+  }
+
+  offerData.teams = stillAvailable;
+  offerData.chosenTeam = null;
+  await msg.reply(`**${takenSchoolName}** was just claimed by someone else! Here are your updated offers:`);
+  await sendOfferDM(msg.author, stillAvailable);
 }
 
 // ---------------------------------------------------------
@@ -746,8 +794,7 @@ async function claimTeam(msg, offerData, school, role) {
     .maybeSingle();
 
   if (existingClaim) {
-    delete client.userOffers[userId];
-    return msg.reply(`**${school.name}** was just claimed by someone else. Contact an admin to get new offers.`);
+    return refreshOffers(msg, userId, league, offerData, school.name);
   }
 
   // Insert claim record
@@ -764,8 +811,7 @@ async function claimTeam(msg, offerData, school, role) {
   if (insertErr) {
     console.error('Failed to claim team:', insertErr);
     if (insertErr.code === '23505') {
-      delete client.userOffers[userId];
-      return msg.reply(`**${school.name}** was just claimed by someone else. Contact an admin to get new offers.`);
+      return refreshOffers(msg, userId, league, offerData, school.name);
     }
     return msg.reply(`Failed to claim **${school.name}**: ${insertErr.message}`);
   }
