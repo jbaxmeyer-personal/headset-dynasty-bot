@@ -579,9 +579,14 @@ async function runListTeamsDisplay(league) {
       confMap[conf].push(school);
     }
 
-    let text = '';
+    if (Object.keys(confMap).length === 0) {
+      await channel.send('No schools configured for this league yet. An admin must run /setup to configure school filters.');
+      return true;
+    }
+
+    // One embed per conference to stay well under Discord's 4096-char embed limit
     for (const [conf, schools] of Object.entries(confMap)) {
-      text += `\n__**${conf}**__\n`;
+      let text = '';
       for (const school of schools) {
         const claim = claimedMap[school.id];
         if (claim) {
@@ -591,18 +596,9 @@ async function runListTeamsDisplay(league) {
           text += `🟢 **${school.name}** — Available\n`;
         }
       }
+      await channel.send({ embeds: [{ title: conf, description: text, color: 0x2b2d31 }] });
     }
 
-    if (!text) text = 'No schools configured for this league yet. An admin must run /setup to configure school filters.';
-
-    const embed = {
-      title: 'Dynasty League Teams',
-      description: text,
-      color: 0x2b2d31,
-      timestamp: new Date()
-    };
-
-    await channel.send({ embeds: [embed] });
     return true;
   } catch (err) {
     console.error('runListTeamsDisplay error:', err);
@@ -1182,17 +1178,24 @@ client.on('interactionCreate', async interaction => {
       await interaction.deferReply({ ephemeral: true });
       const targetUser = interaction.options.getUser('user');
 
-      if (client.userOffers && client.userOffers[targetUser.id] && client.userOffers[targetUser.id].guildId === interaction.guildId) {
-        return interaction.editReply(`⛔ ${targetUser.username} already has a pending offer flow in progress.`);
-      }
+      const league = await getLeague(interaction.guildId);
+      if (!league) return interaction.editReply('League not configured. Run /setup first.');
 
+      // Admin-triggered offers always start fresh — clear any saved offer set and in-progress flow
+      if (client.userOffers && client.userOffers[targetUser.id]) delete client.userOffers[targetUser.id];
+      await supabase.from('user_offers').delete().eq('league_id', league.id).eq('user_id', targetUser.id);
+
+      let started;
       try {
-        await startOfferFlow(targetUser, interaction.guildId);
+        started = await startOfferFlow(targetUser, interaction.guildId);
       } catch (err) {
         console.error('Failed to start offer flow:', err);
         return interaction.editReply(`Error: ${err.message}`);
       }
 
+      if (started === false) {
+        return interaction.editReply(`⛔ **${targetUser.username}** already has a team in this league. Use /resetteam first if you want to reassign them.`);
+      }
       return interaction.editReply(`✅ Job offer flow started for **${targetUser.username}** via DM.`);
     }
 
