@@ -12,29 +12,25 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('joboffers')
-    .setDescription('Send job offers to a user (admin only)')
+    .setDescription('Send job offers to a user (admin or Commissioner role)')
     .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addUserOption(o => o.setName('user').setDescription('The user to send offers to').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('listteams')
-    .setDescription('Refresh the #team-list channel (admin only)')
-    .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    .setDescription('Refresh the #team-list channel (admin or Commissioner role)')
+    .setDMPermission(false),
 
   new SlashCommandBuilder()
     .setName('resetteam')
-    .setDescription('Remove a coach from their team (admin only)')
+    .setDescription('Remove a coach from their team (admin or Commissioner role)')
     .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addUserOption(o => o.setName('user').setDescription('The coach to remove').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('move-coach')
-    .setDescription('Move a coach to a different school (admin only)')
+    .setDescription('Move a coach to a different school (admin or Commissioner role)')
     .setDMPermission(false)
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addUserOption(o => o.setName('coach').setDescription('The coach to move').setRequired(true))
     .addStringOption(o => o
       .setName('new_team')

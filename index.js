@@ -330,6 +330,87 @@ function invalidateLeagueCache(guildId) {
 }
 
 // ---------------------------------------------------------
+// AUTHORIZATION HELPER
+// Allows server admins OR anyone with a role named "Commissioner".
+// ---------------------------------------------------------
+function isAuthorized(member) {
+  if (!member) return false;
+  if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
+  return member.roles.cache.some(r => r.name.toLowerCase() === 'commissioner');
+}
+
+// 7-day offer expiry — offers older than this get regenerated on next react
+const OFFER_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+// ---------------------------------------------------------
+// FLOW STATE PERSISTENCE (feature 9)
+// Saves the user's current DM flow step to user_offers so a bot
+// restart doesn't silently drop them mid-conversation.
+// ---------------------------------------------------------
+async function persistFlowState(leagueId, userId, offerData) {
+  await supabase.from('user_offers').update({
+    step: offerData.step || null,
+    role: offerData.role || null,
+    offense_scheme: offerData.preferredOffenseScheme || null,
+    defense_scheme: offerData.preferredDefenseScheme || null,
+    chosen_school_id: offerData.chosenTeam?.id || null,
+  }).eq('league_id', leagueId).eq('user_id', userId);
+}
+
+async function restoreFlowFromDB(userId) {
+  const { data } = await supabase
+    .from('user_offers')
+    .select('*, leagues!inner(guild_id)')
+    .eq('user_id', userId)
+    .not('step', 'is', null)
+    .maybeSingle();
+
+  if (!data || !data.leagues) return false;
+
+  const guildId = data.leagues.guild_id;
+  let availableSchools = [];
+  let chosenSchool = null;
+
+  if (data.school_ids && data.school_ids.length > 0) {
+    const { data: schools } = await supabase.from('schools').select('*').in('id', data.school_ids);
+    const { data: claimed } = await supabase.from('league_teams').select('school_id').eq('league_id', data.league_id).in('school_id', data.school_ids);
+    const claimedIds = new Set((claimed || []).map(r => r.school_id));
+    availableSchools = (schools || []).filter(s => !claimedIds.has(s.id));
+    if (data.chosen_school_id) chosenSchool = (schools || []).find(s => s.id === data.chosen_school_id) || null;
+  }
+
+  if (!client.userOffers) client.userOffers = {};
+  client.userOffers[userId] = {
+    guildId,
+    step: data.step,
+    teams: availableSchools,
+    chosenTeam: chosenSchool,
+    role: data.role || null,
+    preferredOffenseScheme: data.offense_scheme || null,
+    preferredDefenseScheme: data.defense_scheme || null,
+    savedSchoolIds: data.school_ids || null,
+  };
+
+  return true;
+}
+
+async function resendFlowPrompt(user, league, offerData) {
+  const roles = (league.allowed_roles || 'HC').split(',').map(r => r.trim());
+
+  if (offerData.step === 'choose_team') {
+    if (offerData.teams.length === 0) {
+      await user.send('*(Picking up where we left off — but all your offers were claimed while you were away. Contact a league admin for a fresh set.)*');
+      return;
+    }
+    await user.send('*(Picking up where we left off — here are your job offers:)*');
+    await sendOfferDM(user, offerData.teams);
+  } else if (offerData.step === 'choose_role_after_team') {
+    const school = offerData.chosenTeam;
+    await user.send(`*(Picking up where we left off)*\nYou selected **${school?.name || 'your team'}**! What role would you like?\nReply with one of: **${roles.join(', ')}**`);
+  }
+}
+
+// ---------------------------------------------------------
 // AVAILABLE SCHOOLS QUERY
 // Returns up to `count` random schools matching league filters,
 // scheme preferences (if provided), and not yet claimed.
@@ -636,10 +717,18 @@ async function startOfferFlow(user, guildId) {
 
   const { data: savedOfferRow } = await supabase
     .from('user_offers')
-    .select('school_ids')
+    .select('school_ids, created_at')
     .eq('league_id', league.id)
     .eq('user_id', user.id)
     .maybeSingle();
+
+  let savedSchoolIds = null;
+  if (savedOfferRow?.school_ids) {
+    const ageMs = savedOfferRow.created_at
+      ? Date.now() - new Date(savedOfferRow.created_at).getTime()
+      : Infinity;
+    if (ageMs <= OFFER_EXPIRY_MS) savedSchoolIds = savedOfferRow.school_ids;
+  }
 
   client.userOffers[user.id] = {
     guildId,
@@ -649,7 +738,7 @@ async function startOfferFlow(user, guildId) {
     role: null,
     preferredOffenseScheme: null,
     preferredDefenseScheme: null,
-    savedSchoolIds: savedOfferRow?.school_ids || null,
+    savedSchoolIds,
   };
 
   await advanceOfferFlow(user, league, client.userOffers[user.id]);
@@ -711,7 +800,7 @@ async function advanceOfferFlow(user, league, offerData) {
       offers = await getAvailableSchools(league, league.offer_count ?? 5, schemePrefs);
       if (offers && offers.length > 0) {
         offerData.savedSchoolIds = offers.map(s => s.id);
-        await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id) }, { onConflict: 'league_id,user_id' });
+        await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id), created_at: new Date().toISOString() }, { onConflict: 'league_id,user_id' });
       }
     }
   } else {
@@ -719,7 +808,7 @@ async function advanceOfferFlow(user, league, offerData) {
     offers = await getAvailableSchools(league, league.offer_count ?? 5, schemePrefs);
     if (offers && offers.length > 0) {
       offerData.savedSchoolIds = offers.map(s => s.id);
-      await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id) }, { onConflict: 'league_id,user_id' });
+      await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id), created_at: new Date().toISOString() }, { onConflict: 'league_id,user_id' });
     }
   }
 
@@ -733,6 +822,7 @@ async function advanceOfferFlow(user, league, offerData) {
 
   offerData.teams = offers;
   offerData.step = 'choose_team';
+  await persistFlowState(league.id, user.id, offerData);
 
   await sendOfferDM(user, offers);
 }
@@ -847,6 +937,7 @@ async function claimTeam(msg, offerData, school, role) {
 
   await msg.reply(`You accepted the job offer from **${school.name}** as **${role}**!`);
   delete client.userOffers[userId];
+  await supabase.from('user_offers').update({ step: null, role: null, offense_scheme: null, defense_scheme: null, chosen_school_id: null }).eq('league_id', league.id).eq('user_id', userId);
 
   const guild = client.guilds.cache.get(offerData.guildId);
   if (!guild) return;
@@ -1175,6 +1266,7 @@ client.on('interactionCreate', async interaction => {
     // /joboffers (admin sends to a specific user)
     // ---------------------------
     if (name === 'joboffers') {
+      if (!isAuthorized(interaction.member)) return interaction.reply({ ephemeral: true, content: '⛔ You need to be a server admin or have the Commissioner role.' });
       await interaction.deferReply({ ephemeral: true });
       const targetUser = interaction.options.getUser('user');
 
@@ -1203,6 +1295,7 @@ client.on('interactionCreate', async interaction => {
     // /resetteam
     // ---------------------------
     if (name === 'resetteam') {
+      if (!isAuthorized(interaction.member)) return interaction.reply({ ephemeral: true, content: '⛔ You need to be a server admin or have the Commissioner role.' });
       await interaction.deferReply({ ephemeral: true });
 
       const league = await getLeague(interaction.guildId);
@@ -1251,6 +1344,7 @@ client.on('interactionCreate', async interaction => {
     // /listteams
     // ---------------------------
     if (name === 'listteams') {
+      if (!isAuthorized(interaction.member)) return interaction.reply({ ephemeral: true, content: '⛔ You need to be a server admin or have the Commissioner role.' });
       await interaction.deferReply({ ephemeral: true });
 
       const league = await getLeague(interaction.guildId);
@@ -1876,6 +1970,7 @@ client.on('interactionCreate', async interaction => {
     // /move-coach
     // ---------------------------
     if (name === 'move-coach') {
+      if (!isAuthorized(interaction.member)) return interaction.reply({ ephemeral: true, content: '⛔ You need to be a server admin or have the Commissioner role.' });
       await interaction.deferReply({ ephemeral: true });
 
       const league = await getLeague(interaction.guildId);
@@ -2051,7 +2146,14 @@ client.on('messageCreate', async msg => {
     if (msg.guild || msg.author.bot) return;
 
     const userId = msg.author.id;
-    if (!client.userOffers || !client.userOffers[userId]) return;
+    if (!client.userOffers || !client.userOffers[userId]) {
+      // Try to restore a pending flow from DB (handles bot restarts mid-conversation)
+      const restored = await restoreFlowFromDB(userId);
+      if (!restored) return;
+      const league = await getLeague(client.userOffers[userId].guildId);
+      if (league) await resendFlowPrompt(msg.author, league, client.userOffers[userId]);
+      return;
+    }
 
     const offerData = client.userOffers[userId];
     const league = await getLeague(offerData.guildId);
@@ -2112,6 +2214,8 @@ client.on('messageCreate', async msg => {
           await claimTeam(msg, offerData, school, offerData.role);
         } else {
           offerData.step = 'choose_role_after_team';
+          offerData.chosenTeam = school;
+          await persistFlowState(league.id, userId, offerData);
           await msg.reply(`You selected **${school.name}**! What role would you like?\nReply with one of: **${roles.join(', ')}**`);
         }
         return;
