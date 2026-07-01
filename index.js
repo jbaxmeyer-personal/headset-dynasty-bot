@@ -638,6 +638,13 @@ async function startOfferFlow(user, guildId) {
     return false;
   }
 
+  const { data: savedOfferRow } = await supabase
+    .from('user_offers')
+    .select('school_ids')
+    .eq('league_id', league.id)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
   client.userOffers[user.id] = {
     guildId,
     step: null,
@@ -645,7 +652,8 @@ async function startOfferFlow(user, guildId) {
     chosenTeam: null,
     role: null,
     preferredOffenseScheme: null,
-    preferredDefenseScheme: null
+    preferredDefenseScheme: null,
+    savedSchoolIds: savedOfferRow?.school_ids || null,
   };
 
   await advanceOfferFlow(user, league, client.userOffers[user.id]);
@@ -694,7 +702,30 @@ async function advanceOfferFlow(user, league, offerData) {
     defenseScheme: offerData.preferredDefenseScheme
   };
 
-  const offers = await getAvailableSchools(league, league.offer_count ?? 5, schemePrefs);
+  let offers;
+  if (offerData.savedSchoolIds && offerData.savedSchoolIds.length > 0) {
+    // Load saved offer set, excluding any schools now claimed by others
+    const { data: schools } = await supabase.from('schools').select('*').in('id', offerData.savedSchoolIds);
+    const { data: nowClaimed } = await supabase.from('league_teams').select('school_id').eq('league_id', league.id).in('school_id', offerData.savedSchoolIds);
+    const claimedIds = new Set((nowClaimed || []).map(r => r.school_id));
+    offers = (schools || []).filter(s => !claimedIds.has(s.id));
+
+    if (offers.length === 0) {
+      // All saved offers were taken — generate a fresh set
+      offers = await getAvailableSchools(league, league.offer_count ?? 5, schemePrefs);
+      if (offers && offers.length > 0) {
+        offerData.savedSchoolIds = offers.map(s => s.id);
+        await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id) }, { onConflict: 'league_id,user_id' });
+      }
+    }
+  } else {
+    // First time — generate fresh offers and persist them
+    offers = await getAvailableSchools(league, league.offer_count ?? 5, schemePrefs);
+    if (offers && offers.length > 0) {
+      offerData.savedSchoolIds = offers.map(s => s.id);
+      await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id) }, { onConflict: 'league_id,user_id' });
+    }
+  }
 
   if (!offers || offers.length === 0) {
     delete client.userOffers[user.id];
@@ -773,6 +804,8 @@ async function refreshOffers(msg, userId, league, offerData, takenSchoolName) {
 
   offerData.teams = stillAvailable;
   offerData.chosenTeam = null;
+  offerData.savedSchoolIds = stillAvailable.map(s => s.id);
+  await supabase.from('user_offers').upsert({ league_id: league.id, user_id: userId, school_ids: stillAvailable.map(s => s.id) }, { onConflict: 'league_id,user_id' });
   await msg.reply(`**${takenSchoolName}** was just claimed by someone else! Here are your updated offers:`);
   await sendOfferDM(msg.author, stillAvailable);
 }
@@ -1188,7 +1221,9 @@ client.on('interactionCreate', async interaction => {
       const schoolName = teamData.schools?.name || 'their team';
 
       await supabase.from('league_teams').delete().eq('id', teamData.id);
-  
+      await supabase.from('user_offers').delete().eq('league_id', league.id).eq('user_id', userId);
+      if (client.userOffers && client.userOffers[userId]) delete client.userOffers[userId];
+
       // Delete team channel by stored ID
       if (teamData.channel_id) {
         const ch = await interaction.guild.channels.fetch(teamData.channel_id).catch(() => null);
