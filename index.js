@@ -2088,6 +2088,12 @@ client.on('guildMemberRemove', async (member) => {
       if (ch) await ch.delete('User left server').catch(() => {});
     }
 
+    const general = await client.channels.fetch(league.general_channel_id).catch(() => null);
+    if (general) {
+      const coachName = teamData.taken_by_name || 'A coach';
+      general.send(`👋 **${coachName}** has left the server. **${schoolName}** is now available.`).catch(() => {});
+    }
+
     await runListTeamsDisplay(league);
     console.log(`Reset ${schoolName} for departed user ${userId}`);
   } catch (err) {
