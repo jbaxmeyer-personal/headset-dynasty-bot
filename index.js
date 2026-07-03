@@ -73,7 +73,7 @@ const client = new Client({
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildMessageReactions
   ],
-  partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.GuildMember]
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.GuildMember, Partials.User]
 });
 
 
@@ -2100,6 +2100,7 @@ client.on('guildMemberRemove', async (member) => {
 // ---------------------------------------------------------
 client.on('messageReactionAdd', async (reaction, user) => {
   try {
+    if (user.partial) await user.fetch();
     if (user.bot) return;
     if (reaction.partial) await reaction.fetch();
     if (reaction.message.partial) await reaction.message.fetch();
