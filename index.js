@@ -73,7 +73,7 @@ const client = new Client({
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildMessageReactions
   ],
-  partials: [Partials.Message, Partials.Channel, Partials.Reaction]
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.GuildMember]
 });
 
 
@@ -2065,7 +2065,7 @@ client.on('interactionCreate', async interaction => {
 // ---------------------------------------------------------
 client.on('guildMemberRemove', async (member) => {
   try {
-    const userId = member.user.id;
+    const userId = member.id;
     const league = await getLeague(member.guild.id);
     if (!league) return;
 
