@@ -800,7 +800,8 @@ async function advanceOfferFlow(user, league, offerData) {
       offers = await getAvailableSchools(league, league.offer_count ?? 5, schemePrefs);
       if (offers && offers.length > 0) {
         offerData.savedSchoolIds = offers.map(s => s.id);
-        await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id), created_at: new Date().toISOString() }, { onConflict: 'league_id,user_id' });
+        const { error: upsertErr } = await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id), created_at: new Date().toISOString() }, { onConflict: 'league_id,user_id' });
+        if (upsertErr) console.error('user_offers upsert error (refresh):', upsertErr);
       }
     }
   } else {
@@ -808,7 +809,8 @@ async function advanceOfferFlow(user, league, offerData) {
     offers = await getAvailableSchools(league, league.offer_count ?? 5, schemePrefs);
     if (offers && offers.length > 0) {
       offerData.savedSchoolIds = offers.map(s => s.id);
-      await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id), created_at: new Date().toISOString() }, { onConflict: 'league_id,user_id' });
+      const { error: upsertErr } = await supabase.from('user_offers').upsert({ league_id: league.id, user_id: user.id, school_ids: offers.map(s => s.id), created_at: new Date().toISOString() }, { onConflict: 'league_id,user_id' });
+      if (upsertErr) console.error('user_offers upsert error (fresh):', upsertErr);
     }
   }
 
