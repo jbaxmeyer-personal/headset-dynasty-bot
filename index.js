@@ -1047,14 +1047,7 @@ client.on('interactionCreate', async interaction => {
 
         const search = (focused.value || '').toLowerCase();
 
-        let q = supabase.from('schools').select('id, name')
-          .gte('stars', league.min_stars ?? 0)
-          .lte('stars', league.max_stars ?? 5);
-        if (league.allowed_conferences) {
-          const confs = league.allowed_conferences.split(',').map(c => c.trim()).filter(Boolean);
-          q = q.in('conference', confs);
-        }
-        const { data: allSchools } = await q;
+        const { data: allSchools } = await supabase.from('schools').select('id, name');
 
         const { data: claimed } = await supabase
           .from('league_teams')
@@ -1980,6 +1973,7 @@ client.on('interactionCreate', async interaction => {
 
       const coachUser = interaction.options.getUser('coach');
       const newSchoolId = parseInt(interaction.options.getString('new_team'));
+      const newRoleOption = interaction.options.getString('role');
 
       // Find coach's current team
       const { data: currentTeam, error: currentErr } = await supabase
@@ -2012,9 +2006,11 @@ client.on('interactionCreate', async interaction => {
         return interaction.editReply(`**${newSchool.name}** is already taken by ${existingClaim.taken_by_name}.`);
       }
 
-      // Update league_teams: point to new school
+      const newRole = newRoleOption || currentTeam.role || 'HC';
+
+      // Update league_teams: point to new school and set role
       await supabase.from('league_teams')
-        .update({ school_id: newSchoolId })
+        .update({ school_id: newSchoolId, role: newRole })
         .eq('id', currentTeam.id);
 
       const oldSchoolName = currentTeam.schools?.name || 'old team';
@@ -2032,8 +2028,7 @@ client.on('interactionCreate', async interaction => {
       // Update nickname
       try {
         const member = await guild.members.fetch(coachUser.id);
-        const role = currentTeam.role || 'HC';
-        const nickname = `${newSchool.name} - ${role}`.substring(0, 32);
+        const nickname = `${newSchool.name} - ${newRole}`.substring(0, 32);
         await member.setNickname(nickname, 'Coach moved').catch(() => {});
       } catch (err) {
         console.log(`Could not update nickname for ${coachUser.id}:`, err.message);
@@ -2042,12 +2037,11 @@ client.on('interactionCreate', async interaction => {
       // Announce in general
       const general = await client.channels.fetch(league.general_channel_id).catch(() => null);
       if (general) {
-        const role = currentTeam.role || 'HC';
-        general.send(`🔁 <@${coachUser.id}> has moved from **${oldSchoolName}** to **${newSchool.name}** (${role}).`).catch(() => {});
+        general.send(`🔁 <@${coachUser.id}> has moved from **${oldSchoolName}** to **${newSchool.name}** (${newRole}).`).catch(() => {});
       }
 
       await runListTeamsDisplay(league);
-      return interaction.editReply(`✅ Moved **${coachUser.username}** from **${oldSchoolName}** to **${newSchool.name}**.`);
+      return interaction.editReply(`✅ Moved **${coachUser.username}** from **${oldSchoolName}** to **${newSchool.name}** (${newRole}).`);
     }
 
   } catch (err) {

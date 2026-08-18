@@ -36,7 +36,16 @@ const commands = [
       .setName('new_team')
       .setDescription('The new school')
       .setRequired(true)
-      .setAutocomplete(true)),
+      .setAutocomplete(true))
+    .addStringOption(o => o
+      .setName('role')
+      .setDescription('New coaching role (leave blank to keep current role)')
+      .setRequired(false)
+      .addChoices(
+        { name: 'HC — Head Coach', value: 'HC' },
+        { name: 'OC — Offensive Coordinator', value: 'OC' },
+        { name: 'DC — Defensive Coordinator', value: 'DC' },
+      )),
 
   new SlashCommandBuilder()
     .setName('help')
