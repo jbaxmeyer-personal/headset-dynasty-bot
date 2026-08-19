@@ -611,7 +611,21 @@ async function sendSettingsPanelFollowUp(interaction) {
 // ---------------------------------------------------------
 async function runListTeamsDisplay(league) {
   try {
-    // All schools in the pool (based on league filters)
+    // All claimed slots for this league (must always show regardless of filters)
+    const { data: claimedTeams, error: claimedErr } = await supabase
+      .from('league_teams')
+      .select('school_id, taken_by, taken_by_name, role')
+      .eq('league_id', league.id);
+    if (claimedErr) throw claimedErr;
+
+    const claimedMap = {};
+    const claimedSchoolIds = new Set();
+    for (const c of (claimedTeams || [])) {
+      claimedMap[c.school_id] = c;
+      claimedSchoolIds.add(c.school_id);
+    }
+
+    // Available schools within league filters
     let q = supabase.from('schools').select('*')
       .gte('stars', league.min_stars ?? 0)
       .lte('stars', league.max_stars ?? 5)
@@ -623,20 +637,21 @@ async function runListTeamsDisplay(league) {
       q = q.in('conference', confs);
     }
 
-    const { data: allSchools, error: schoolErr } = await q;
-    if (schoolErr) throw schoolErr;
+    const { data: filteredSchools } = await q;
 
-    // All claimed slots for this league
-    const { data: claimedTeams, error: claimedErr } = await supabase
-      .from('league_teams')
-      .select('school_id, taken_by, taken_by_name, role')
-      .eq('league_id', league.id);
-    if (claimedErr) throw claimedErr;
-
-    const claimedMap = {};
-    for (const c of (claimedTeams || [])) {
-      claimedMap[c.school_id] = c;
+    // Fetch full records for any claimed schools outside the filters
+    const outsideIds = [...claimedSchoolIds].filter(id => !(filteredSchools || []).some(s => s.id === id));
+    let outsideSchools = [];
+    if (outsideIds.length > 0) {
+      const { data } = await supabase.from('schools').select('*').in('id', outsideIds);
+      outsideSchools = data || [];
     }
+
+    // Merge: all filtered schools + any claimed schools outside the filters
+    const schoolMap = {};
+    for (const s of [...(filteredSchools || []), ...outsideSchools]) schoolMap[s.id] = s;
+    const allSchools = Object.values(schoolMap).sort((a, b) =>
+      (a.conference || '').localeCompare(b.conference || '') || a.name.localeCompare(b.name));
 
     const channel = await client.channels.fetch(league.team_list_channel_id).catch(() => null);
     if (!channel) return false;
@@ -654,7 +669,7 @@ async function runListTeamsDisplay(league) {
 
     // Group by conference
     const confMap = {};
-    for (const school of (allSchools || [])) {
+    for (const school of allSchools) {
       const conf = school.conference || 'Independent';
       if (!confMap[conf]) confMap[conf] = [];
       confMap[conf].push(school);
