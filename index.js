@@ -687,7 +687,7 @@ async function runListTeamsDisplay(league) {
         const claim = claimedMap[school.id];
         if (claim) {
           const roleLabel = claim.role ? ` (${claim.role})` : '';
-          text += `🏈 **${school.name}** — <@${claim.taken_by}>${roleLabel}\n`;
+          text += `🏈 **${school.name}** — ${claim.taken_by_name || `<@${claim.taken_by}>`}${roleLabel}\n`;
         } else {
           text += `🟢 **${school.name}** — Available\n`;
         }
