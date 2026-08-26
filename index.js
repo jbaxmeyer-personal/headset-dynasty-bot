@@ -614,7 +614,7 @@ async function runListTeamsDisplay(league) {
     // All claimed slots for this league (must always show regardless of filters)
     const { data: claimedTeams, error: claimedErr } = await supabase
       .from('league_teams')
-      .select('school_id, taken_by, taken_by_name, role')
+      .select('school_id, taken_by, taken_by_name, role, channel_id')
       .eq('league_id', league.id);
     if (claimedErr) throw claimedErr;
 
@@ -687,7 +687,8 @@ async function runListTeamsDisplay(league) {
         const claim = claimedMap[school.id];
         if (claim) {
           const roleLabel = claim.role ? ` (${claim.role})` : '';
-          text += `🏈 **${school.name}** — ${claim.taken_by_name || 'Unknown'} (<@${claim.taken_by}>)${roleLabel}\n`;
+          const channelLink = claim.channel_id ? ` <#${claim.channel_id}>` : '';
+          text += `🏈 **${school.name}** — ${claim.taken_by_name || 'Unknown'}${roleLabel}${channelLink}\n`;
         } else {
           text += `🟢 **${school.name}** — Available\n`;
         }
